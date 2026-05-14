@@ -1,44 +1,6 @@
 #!/usr/bin/env node
 
-/**
- * Cronicle Plugin: Easypanel Deploy
- * ------------------------------------
- * Creates an app service in Easypanel from a GitHub repository
- * (Dockerfile build), deploys it, and monitors until completion.
- *
- * CRONICLE PROTOCOL (stdin/stdout JSON):
- *   - stdin:  JSON with { job, params }
- *   - stdout: JSON progress lines { progress: 0-1 } or log { msg: "..." }
- *   - stdout final: { complete: 1, code: 0|1, description: "..." }
- *
- * PARAMETERS (configured in the Cronicle UI when registering the plugin):
- *   project_name           - Easypanel project name
- *   service_name           - Base service name
- *   service_name_as_prefix - If true, append the job ID as suffix
- *   github_owner           - GitHub repository owner
- *   github_repo            - Repository name
- *   github_branch          - Branch to build (e.g. main)
- *   github_build_path      - Build context path inside the repo (e.g. /)
- *   dockerfile             - Dockerfile path (e.g. Dockerfile)
- *   run_command            - Optional runtime command (Advanced -> Command in Easypanel)
- *   env_vars               - Environment variables as JSON (e.g. {"KEY": "value"})
- *   easypanel_url          - Easypanel base URL (e.g. https://panel.example.com)
- *   easypanel_token        - API token
- *
- * JOB PROTOCOL (the script running inside the container):
- *   The job must write JSON lines to stdout following the Cronicle protocol:
- *     {"progress": 0.5}                                      <- optional progress
- *     {"complete": 1, "code": 0, "label": "Success"}        <- success
- *     {"complete": 1, "code": 1, "description": "Error"}    <- failure
- *   The container process must always exit with code 0 to prevent Easypanel restarts.
- *   Requires Advanced Logs enabled in Easypanel (uses Loki internally).
- *
- * INSTALLATION:
- *   1. chmod +x plugins/easypanel-deploy.js
- *   2. In Cronicle: Admin -> Plugins -> Add Plugin
- *      Command: /opt/cronicle/plugins/easypanel-deploy.js
- *      (or import conf/easypanel-plugin.json via control.sh import)
- */
+// See README.md for documentation, parameters, and job protocol.
 
 'use strict';
 
