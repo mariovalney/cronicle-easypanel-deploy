@@ -80,17 +80,17 @@ Run this command inside the Cronicle container after startup:
 
 | Parameter | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `easypanel_url` | text | Yes | (none) | Base URL of your Easypanel instance, without trailing slash. Example: `https://panel.example.com` |
-| `easypanel_token` | password | Yes | (none) | Easypanel API token. Set the default value at the plugin level so all events share the same token. To use a different token per event, change the field type to `text` and fill it in each job |
-| `project_name` | text | Yes | (none) | Easypanel project name. Only lowercase letters, numbers, hyphens and underscores are allowed |
-| `service_name` | text | Yes | (none) | Base name for the ephemeral service |
+| `easypanel_url` | text | Yes | - | Base URL of your Easypanel instance, without trailing slash. Example: `https://panel.example.com` |
+| `easypanel_token` | password | Yes | - | Easypanel API token. Set the default value at the plugin level so all events share the same token. To use a different token per event, change the field type to `text` and fill it in each job |
+| `project_name` | text | Yes | - | Easypanel project name. Only lowercase letters, numbers, hyphens and underscores are allowed |
+| `service_name` | text | Yes | - | Base name for the ephemeral service |
 | `service_name_as_prefix` | checkbox | No | `true` | When checked, the final service name is `{service_name}-{job_id}`, guaranteeing uniqueness across concurrent runs. When unchecked, the exact name is used |
-| `github_owner` | text | Yes | (none) | GitHub user or organization that owns the repository |
-| `github_repo` | text | Yes | (none) | Repository name (without the owner prefix) |
+| `github_owner` | text | Yes | - | GitHub user or organization that owns the repository |
+| `github_repo` | text | Yes | - | Repository name (without the owner prefix) |
 | `github_branch` | text | Yes | `main` | Branch to build from |
 | `github_build_path` | text | No | `/` | Path inside the repository where the Dockerfile is located |
 | `dockerfile` | text | No | `Dockerfile` | Dockerfile path, relative to Build Path |
-| `run_command` | text | No | (none) | Runtime command to override the Dockerfile `CMD`. Corresponds to **Advanced &rarr; Command** in Easypanel. Leave empty to use the image default |
+| `run_command` | text | No | - | Runtime command to override the Dockerfile `CMD`. Corresponds to **Advanced &rarr; Command** in Easypanel. Leave empty to use the image default |
 | `env_vars` | textarea | No | `{}` | Environment variables passed to the container, as a JSON object. Example: `{"NODE_ENV": "production", "PORT": "3000"}` |
 
 ---
