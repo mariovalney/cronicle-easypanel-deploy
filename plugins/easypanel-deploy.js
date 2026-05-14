@@ -452,9 +452,9 @@ async function main() {
     }
   }
 
-  const token = (params.easypanel_token || '').trim() || process.env.EASYPANEL_TOKEN || '';
+  const token = (params.easypanel_token || '').trim();
   if (!token) {
-    fail('Token do Easypanel não informado. Configure o parâmetro "easypanel_token" ou a variável de ambiente EASYPANEL_TOKEN.');
+    fail('Token do Easypanel não informado. Configure o parâmetro "easypanel_token" no plugin.');
   }
 
   const baseUrl = params.easypanel_url.trim().replace(/\/+$/, '');

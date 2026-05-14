@@ -9,7 +9,6 @@ A [Cronicle Edge](https://github.com/cronicle-edge/cronicle-edge) plugin that cr
 - [Installation](#installation)
 - [Parameters](#parameters)
 - [Job Protocol](#job-protocol)
-- [Environment Variables](#environment-variables)
 - [How It Works](#how-it-works)
 
 ---
@@ -79,12 +78,10 @@ Run this command inside the Cronicle container after startup:
 
 ## Parameters
 
-These parameters are configured per-event in the Cronicle web UI when creating a scheduled job using this plugin.
-
 | Parameter | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `easypanel_url` | text | Yes | — | Base URL of your Easypanel instance, without trailing slash. Example: `https://panel.example.com` |
-| `easypanel_token` | password | * | — | Easypanel API token. Can be left empty if the `EASYPANEL_TOKEN` environment variable is set on the Cronicle container |
+| `easypanel_token` | password | Yes | — | Easypanel API token. Set the default value at the plugin level so all events share the same token. To use a different token per event, change the field type to `text` and fill it in each job |
 | `project_name` | text | Yes | — | Easypanel project name. Only lowercase letters, numbers, hyphens and underscores are allowed |
 | `service_name` | text | Yes | — | Base name for the ephemeral service |
 | `service_name_as_prefix` | checkbox | No | `true` | When checked, the final service name is `{service_name}-{job_id}`, guaranteeing uniqueness across concurrent runs. When unchecked, the exact name is used |
@@ -95,8 +92,6 @@ These parameters are configured per-event in the Cronicle web UI when creating a
 | `dockerfile` | text | No | `Dockerfile` | Dockerfile path, relative to Build Path |
 | `run_command` | text | No | — | Runtime command to override the Dockerfile `CMD`. Corresponds to **Advanced → Command** in Easypanel. Leave empty to use the image default |
 | `env_vars` | textarea | No | `{}` | Environment variables passed to the container, as a JSON object. Example: `{"NODE_ENV": "production", "PORT": "3000"}` |
-
-> **\* Token via environment variable:** Instead of setting the token on every event, you can add `EASYPANEL_TOKEN` to the `job_env` section of your Cronicle `config.json`. The plugin reads the parameter first; if empty, it falls back to `process.env.EASYPANEL_TOKEN`.
 
 ---
 
@@ -149,24 +144,6 @@ async function run() {
 run().catch(err => {
   process.stdout.write(JSON.stringify({ complete: 1, code: 1, description: err.message }) + '\n');
 }).finally(() => process.exit(0));
-```
-
----
-
-## Environment Variables
-
-The plugin reads the following environment variables from the Cronicle container:
-
-| Variable | Description |
-|---|---|
-| `EASYPANEL_TOKEN` | Easypanel API token. Used as fallback when the `easypanel_token` parameter is not set on the event |
-
-To set this globally for all jobs, add it to the `job_env` section of your Cronicle `config.json`:
-
-```json
-"job_env": {
-  "EASYPANEL_TOKEN": "your-api-token-here"
-}
 ```
 
 ---
