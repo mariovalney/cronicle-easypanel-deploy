@@ -120,26 +120,7 @@ Rules:
 - If no `complete` line is found in the container logs, the plugin reports a failure.
 - Any free-form text printed to stdout also appears in the Easypanel service logs.
 
-**Example job script (Node.js):**
-
-```javascript
-#!/usr/bin/env node
-'use strict';
-
-async function run() {
-  // ... your job logic ...
-
-  process.stdout.write(JSON.stringify({ progress: 0.5 }) + '\n');
-
-  // ... more work ...
-
-  process.stdout.write(JSON.stringify({ complete: 1, code: 0, label: 'Done' }) + '\n');
-}
-
-run().catch(err => {
-  process.stdout.write(JSON.stringify({ complete: 1, code: 1, description: err.message }) + '\n');
-}).finally(() => process.exit(0));
-```
+See [`examples/hello-world/main.py`](examples/hello-world/main.py) for a working reference implementation.
 
 
 ## How It Works
