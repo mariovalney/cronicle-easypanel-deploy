@@ -1,43 +1,43 @@
 #!/usr/bin/env node
 
 /**
- * Plugin Cronicle: Easypanel Deploy
+ * Cronicle Plugin: Easypanel Deploy
  * ------------------------------------
- * Cria um serviço app no Easypanel a partir de um repositório GitHub
- * (build via Dockerfile), faz o deploy e monitora até a conclusão.
+ * Creates an app service in Easypanel from a GitHub repository
+ * (Dockerfile build), deploys it, and monitors until completion.
  *
- * PROTOCOLO CRONICLE (stdin/stdout JSON):
- *   - stdin: JSON com { job, params }
- *   - stdout: linhas JSON de progresso { progress: 0-1 } ou log { msg: "..." }
+ * CRONICLE PROTOCOL (stdin/stdout JSON):
+ *   - stdin:  JSON with { job, params }
+ *   - stdout: JSON progress lines { progress: 0-1 } or log { msg: "..." }
  *   - stdout final: { complete: 1, code: 0|1, description: "..." }
  *
- * PARÂMETROS (configurados na UI do Cronicle ao registrar o plugin):
- *   project_name          - Nome do projeto no Easypanel
- *   service_name          - Nome base do serviço
- *   service_name_as_prefix- Se true, sufixar com o job ID completo
- *   github_owner          - Dono do repositório GitHub
- *   github_repo           - Nome do repositório
- *   github_branch         - Branch a fazer build (ex: main)
- *   github_build_path     - Caminho do build dentro do repo (ex: /)
- *   dockerfile            - Caminho do Dockerfile (ex: Dockerfile)
- *   run_command           - Comando de runtime opcional (Advanced → Command no Easypanel)
- *   env_vars              - Variáveis de ambiente em JSON (ex: {"KEY": "value"})
- *   easypanel_url         - URL base do Easypanel (ex: https://panel.meudominio.com)
- *   easypanel_token       - Token da API (ou via env EASYPANEL_TOKEN)
+ * PARAMETERS (configured in the Cronicle UI when registering the plugin):
+ *   project_name           - Easypanel project name
+ *   service_name           - Base service name
+ *   service_name_as_prefix - If true, append the job ID as suffix
+ *   github_owner           - GitHub repository owner
+ *   github_repo            - Repository name
+ *   github_branch          - Branch to build (e.g. main)
+ *   github_build_path      - Build context path inside the repo (e.g. /)
+ *   dockerfile             - Dockerfile path (e.g. Dockerfile)
+ *   run_command            - Optional runtime command (Advanced -> Command in Easypanel)
+ *   env_vars               - Environment variables as JSON (e.g. {"KEY": "value"})
+ *   easypanel_url          - Easypanel base URL (e.g. https://panel.example.com)
+ *   easypanel_token        - API token
  *
- * PROTOCOLO DO JOB (o script dentro do container):
- *   O job deve escrever linhas JSON no stdout seguindo o protocolo Cronicle:
- *     {"progress": 0.5}                                    ← progresso opcional
- *     {"complete": 1, "code": 0, "label": "Sucesso"}      ← encerramento com sucesso
- *     {"complete": 1, "code": 1, "description": "Erro"}   ← encerramento com falha
- *   O processo do container deve sempre sair com exit 0 (para o Easypanel não restartar).
- *   Requer Advanced Logs habilitado no Easypanel (usa Loki internamente).
+ * JOB PROTOCOL (the script running inside the container):
+ *   The job must write JSON lines to stdout following the Cronicle protocol:
+ *     {"progress": 0.5}                                      <- optional progress
+ *     {"complete": 1, "code": 0, "label": "Success"}        <- success
+ *     {"complete": 1, "code": 1, "description": "Error"}    <- failure
+ *   The container process must always exit with code 0 to prevent Easypanel restarts.
+ *   Requires Advanced Logs enabled in Easypanel (uses Loki internally).
  *
- * INSTALAÇÃO:
+ * INSTALLATION:
  *   1. chmod +x plugins/easypanel-deploy.js
- *   2. No Cronicle: Admin → Plugins → Add Plugin
+ *   2. In Cronicle: Admin -> Plugins -> Add Plugin
  *      Command: /opt/cronicle/plugins/easypanel-deploy.js
- *      (ou importar conf/easypanel-plugin.json via control.sh import)
+ *      (or import conf/easypanel-plugin.json via control.sh import)
  */
 
 'use strict';
@@ -45,7 +45,7 @@
 const https = require('https');
 const http = require('http');
 
-// ─── Configuração ────────────────────────────────────────────────────────────
+// ─── Configuration ────────────────────────────────────────────────────────────
 
 const POLL_INTERVAL_MS = 5000;
 const TIMEOUT_MS = 24 * 60 * 60 * 1000;
@@ -53,7 +53,7 @@ const TIMEOUT_MS = 24 * 60 * 60 * 1000;
 const STATUS_SUCCESS = ['done', 'success', 'completed'];
 const STATUS_FAILURE = ['error', 'failed', 'cancelled'];
 
-// ─── Utilitários de log (protocolo Cronicle) ─────────────────────────────────
+// ─── Logging (Cronicle protocol) ──────────────────────────────────────────────
 
 function log(msg) {
   process.stdout.write(`[INFO] ${msg}\n`);
@@ -67,7 +67,7 @@ function formatTs(nsTimestamp) {
 function progress(value) {
   const p = Math.min(Math.max(value, 0), 1);
   process.stdout.write(JSON.stringify({ progress: p }) + '\n');
-  log(`${Math.round(p * 100)}% concluído`);
+  log(`${Math.round(p * 100)}% complete`);
 }
 
 function complete(description) {
@@ -80,7 +80,7 @@ function fail(description) {
   process.exit(1);
 }
 
-// ─── Utilitários HTTP ─────────────────────────────────────────────────────────
+// ─── HTTP utilities ───────────────────────────────────────────────────────────
 
 function request(options) {
   return new Promise((resolve, reject) => {
@@ -119,7 +119,7 @@ function request(options) {
   });
 }
 
-// ─── Funções da API do Easypanel (tRPC) ───────────────────────────────────────
+// ─── Easypanel API (tRPC) ─────────────────────────────────────────────────────
 
 function makeHeaders(token) {
   return {
@@ -166,7 +166,7 @@ async function destroyService(baseUrl, token, projectName, serviceName) {
     json: { projectName, serviceName },
   });
   if (res.status !== 200) {
-    throw new Error(`Falha ao destruir serviço: HTTP ${res.status}`);
+    throw new Error(`Failed to destroy service: HTTP ${res.status}`);
   }
 }
 
@@ -197,7 +197,7 @@ async function createService(baseUrl, token, params) {
   const res = await trpcMutation(baseUrl, token, 'services.app.createService', body);
   if (res.status !== 200) {
     const msg = res.body?.error?.message || JSON.stringify(res.body);
-    throw new Error(`Falha ao criar serviço: HTTP ${res.status} — ${msg}`);
+    throw new Error(`Failed to create service: HTTP ${res.status} - ${msg}`);
   }
 }
 
@@ -207,7 +207,7 @@ async function deployService(baseUrl, token, projectName, serviceName) {
   });
   if (res.status !== 200) {
     const msg = res.body?.error?.message || JSON.stringify(res.body);
-    throw new Error(`Falha ao iniciar deploy: HTTP ${res.status} — ${msg}`);
+    throw new Error(`Failed to start deploy: HTTP ${res.status} - ${msg}`);
   }
 }
 
@@ -238,12 +238,12 @@ async function getServiceLogs(baseUrl, token, projectName, serviceName, startNs)
 
   if (res.status === 500) {
     throw new Error(
-      'Não foi possível ler os logs do serviço. Verifique se "Advanced Logs" está habilitado no Easypanel (requer Loki).'
+      'Could not read service logs. Make sure "Advanced Logs" is enabled in Easypanel (requires Loki).'
     );
   }
 
   if (res.status !== 200) {
-    throw new Error(`Falha ao buscar logs: HTTP ${res.status}`);
+    throw new Error(`Failed to fetch logs: HTTP ${res.status}`);
   }
 
   return res.body?.result?.data?.json?.entries || [];
@@ -260,7 +260,7 @@ function parseJobResult(entries) {
         const parsed = JSON.parse(line.slice(jsonStart));
         if (parsed.complete === 1) return parsed;
       } catch {
-        // linha de texto livre, ignorar
+        // free-form text line, ignore
       }
     }
   }
@@ -268,7 +268,7 @@ function parseJobResult(entries) {
   return null;
 }
 
-// ─── Funções auxiliares ───────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function envJsonToString(jsonStr) {
   if (!jsonStr || !jsonStr.trim() || jsonStr.trim() === '{}') return '';
@@ -282,18 +282,18 @@ function sanitizeServiceName(name) {
   return name.toLowerCase().replace(/[^a-z0-9-_]/g, '-');
 }
 
-// ─── Loop de monitoramento ────────────────────────────────────────────────────
+// ─── Polling loops ────────────────────────────────────────────────────────────
 
 async function waitForDeploy(baseUrl, token, projectName, serviceName) {
   const startTime = Date.now();
 
-  log(`Monitorando deploy de "${serviceName}"...`);
+  log(`Monitoring deploy of "${serviceName}"...`);
 
   while (true) {
     const elapsed = Date.now() - startTime;
 
     if (elapsed > TIMEOUT_MS) {
-      throw new Error('Timeout de 24 horas atingido aguardando o deploy.');
+      throw new Error('24-hour timeout reached waiting for deploy.');
     }
 
     const estimatedProgress = Math.min(0.95, (elapsed / TIMEOUT_MS) * 0.95);
@@ -302,25 +302,25 @@ async function waitForDeploy(baseUrl, token, projectName, serviceName) {
     const action = await getLatestDeployAction(baseUrl, token, projectName, serviceName);
 
     if (!action) {
-      log('Aguardando action de deploy aparecer...');
+      log('Waiting for deploy action to appear...');
       await sleep(POLL_INTERVAL_MS);
       continue;
     }
 
     const status = (action.status || '').toLowerCase();
-    log(`Status do deploy: "${status}"`);
+    log(`Deploy status: "${status}"`);
 
     if (STATUS_SUCCESS.includes(status)) {
-      log('Deploy concluído com sucesso.');
+      log('Deploy completed successfully.');
       return true;
     }
 
     if (STATUS_FAILURE.includes(status)) {
       const reason = action.error || action.message || status;
-      throw new Error(`Deploy falhou com status "${status}": ${reason}`);
+      throw new Error(`Deploy failed with status "${status}": ${reason}`);
     }
 
-    log(`Status "${status}" não é terminal — continuando polling...`);
+    log(`Status "${status}" is not terminal, continuing to poll...`);
     await sleep(POLL_INTERVAL_MS);
   }
 }
@@ -335,7 +335,7 @@ async function getServiceStats(baseUrl, token, projectName, serviceName) {
       return res.body.result.data.json;
     }
   } catch {
-    // stats são informativas, não críticas
+    // stats are informational, not critical
   }
   return null;
 }
@@ -353,7 +353,7 @@ function logServiceStats(stats) {
   const memPct = stats.memory?.percent != null
     ? stats.memory.percent.toFixed(2)
     : null;
-  const mem = memMB && memPct ? `Memória: ${memMB} MB (${memPct}%)` : null;
+  const mem = memMB && memPct ? `Memory: ${memMB} MB (${memPct}%)` : null;
 
   const netInMB = stats.network?.in != null
     ? (stats.network.in / 1024 / 1024).toFixed(2)
@@ -361,7 +361,7 @@ function logServiceStats(stats) {
   const netOutMB = stats.network?.out != null
     ? (stats.network.out / 1024 / 1024).toFixed(2)
     : null;
-  const net = netInMB && netOutMB ? `Rede: ↓${netInMB} MB  ↑${netOutMB} MB` : null;
+  const net = netInMB && netOutMB ? `Network: ↓${netInMB} MB  ↑${netOutMB} MB` : null;
 
   const parts = [cpu, mem, net].filter(Boolean);
   if (parts.length > 0) {
@@ -375,13 +375,13 @@ async function waitForJobComplete(baseUrl, token, projectName, serviceName) {
   let lastSeenTs = startNs;
   const collectedLogs = [];
 
-  log('Aguardando resultado do job nos logs...');
+  log('Waiting for job result in logs...');
 
   await sleep(POLL_INTERVAL_MS);
 
   while (true) {
     if (Date.now() - startTime > TIMEOUT_MS) {
-      throw new Error('Timeout de 24 horas atingido aguardando resultado do job.');
+      throw new Error('24-hour timeout reached waiting for job result.');
     }
 
     const entries = await getServiceLogs(baseUrl, token, projectName, serviceName, startNs);
@@ -412,7 +412,7 @@ async function waitForJobComplete(baseUrl, token, projectName, serviceName) {
             progress(parsed.progress);
           }
         } catch {
-          // linha de texto livre, ignorar
+          // free-form text line, ignore
         }
       }
     }
@@ -442,19 +442,19 @@ async function main() {
     job = JSON.parse(input);
     params = job.params || {};
   } catch {
-    fail('Erro ao parsear o JSON de entrada do stdin.');
+    fail('Failed to parse stdin JSON input.');
   }
 
   const required = ['project_name', 'service_name', 'github_owner', 'github_repo', 'github_branch', 'easypanel_url'];
   for (const key of required) {
     if (!params[key] || !String(params[key]).trim()) {
-      fail(`Parâmetro obrigatório ausente: "${key}"`);
+      fail(`Missing required parameter: "${key}"`);
     }
   }
 
   const token = (params.easypanel_token || '').trim();
   if (!token) {
-    fail('Token do Easypanel não informado. Configure o parâmetro "easypanel_token" no plugin.');
+    fail('Easypanel token not set. Configure the "easypanel_token" parameter on the plugin.');
   }
 
   const baseUrl = params.easypanel_url.trim().replace(/\/+$/, '');
@@ -466,16 +466,16 @@ async function main() {
     : params.service_name;
   const serviceName = sanitizeServiceName(rawName);
 
-  log(`Iniciando deploy do serviço: "${serviceName}" no projeto "${projectName}"`);
-  log(`Repositório: ${params.github_owner}/${params.github_repo}@${params.github_branch}`);
+  log(`Starting deploy of service "${serviceName}" in project "${projectName}"`);
+  log(`Repository: ${params.github_owner}/${params.github_repo}@${params.github_branch}`);
 
-  log('Verificando se o serviço já existe...');
+  log('Checking if service already exists...');
   const existing = await inspectService(baseUrl, token, projectName, serviceName);
 
   if (existing) {
-    fail(`O serviço "${serviceName}" já existe no projeto "${projectName}". Remova-o antes de executar o job.`);
+    fail(`Service "${serviceName}" already exists in project "${projectName}". Remove it before running the job.`);
   } else {
-    log('Nenhum serviço existente. Prosseguindo com a criação.');
+    log('No existing service found. Proceeding with creation.');
   }
 
   let envString = '';
@@ -483,11 +483,11 @@ async function main() {
     try {
       envString = envJsonToString(params.env_vars);
     } catch {
-      fail('O campo "env_vars" não é um JSON válido. Ex: {"CHAVE": "valor"}');
+      fail('The "env_vars" field is not valid JSON. Example: {"KEY": "value"}');
     }
   }
 
-  log('Criando serviço no Easypanel...');
+  log('Creating service in Easypanel...');
   await createService(baseUrl, token, {
     projectName,
     serviceName,
@@ -499,15 +499,15 @@ async function main() {
     runCommand: (params.run_command || '').trim() || null,
     envString,
   });
-  log('Serviço criado com sucesso.');
+  log('Service created successfully.');
 
   await waitForDeploy(baseUrl, token, projectName, serviceName);
 
   const { result, logs } = await waitForJobComplete(baseUrl, token, projectName, serviceName);
 
-  log('Destruindo serviço...');
+  log('Destroying service...');
   await destroyService(baseUrl, token, projectName, serviceName);
-  log('Serviço destruído.');
+  log('Service destroyed.');
 
   process.stdout.write('----------------------------------------------------------------------------\n');
   process.stdout.write('----------------------------------- LOGS -----------------------------------\n');
@@ -517,16 +517,16 @@ async function main() {
   }
 
   if (!result) {
-    fail('Job não reportou status. O script do container deve escrever {"complete":1,"code":0} ao final.');
+    fail('Job did not report a status. The container script must write {"complete":1,"code":0} before exiting.');
   }
 
   if (result.code !== 0) {
-    fail(result.description || `Job encerrou com código de saída ${result.code}.`);
+    fail(result.description || `Job exited with code ${result.code}.`);
   }
 
-  complete(result.label || `Job "${serviceName}" concluído com sucesso.`);
+  complete(result.label || `Job "${serviceName}" completed successfully.`);
 }
 
 main().catch(err => {
-  fail(`Erro inesperado: ${err.message}`);
+  fail(`Unexpected error: ${err.message}`);
 });
