@@ -118,7 +118,7 @@ Rules:
 - The container process **must exit with code 0**, regardless of the job result. If the process exits with a non-zero code, Easypanel will restart the container.
 - The last line containing `"complete": 1` determines what is reported back to Cronicle.
 - If no `complete` line is found in the container logs, the plugin reports a failure.
-- Any free-form text printed to stdout also appears in the Easypanel service logs.
+- All service logs are collected and displayed in the Cronicle job log upon completion.
 
 See [`examples/hello-world/main.py`](examples/hello-world/main.py) for a working reference implementation.
 
