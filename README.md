@@ -11,7 +11,6 @@ A [Cronicle Edge](https://github.com/cronicle-edge/cronicle-edge) plugin that cr
 - [Job Protocol](#job-protocol)
 - [How It Works](#how-it-works)
 
----
 
 ## Overview
 
@@ -25,7 +24,6 @@ The **Easypanel Deploy** plugin allows Cronicle to run containerized jobs withou
 
 This pattern is useful for running batch jobs, data pipelines, or any workload that should run in an isolated container and report back a success or failure to Cronicle.
 
----
 
 ## Prerequisites
 
@@ -33,7 +31,6 @@ This pattern is useful for running batch jobs, data pipelines, or any workload t
 - A GitHub repository containing a `Dockerfile` that runs your job
 - An Easypanel API token
 
----
 
 ## Installation
 
@@ -74,7 +71,6 @@ Run this command inside the Cronicle container after startup:
 3. Set **Command** to `/opt/cronicle/plugins/easypanel-deploy.js`
 4. Add the parameters listed in the [Parameters](#parameters) section below
 
----
 
 ## Parameters
 
@@ -93,7 +89,6 @@ Run this command inside the Cronicle container after startup:
 | `run_command` | text | No | - | Runtime command to override the Dockerfile `CMD`. Corresponds to **Advanced &rarr; Command** in Easypanel. Leave empty to use the image default |
 | `env_vars` | textarea | No | `{}` | Environment variables passed to the container, as a JSON object. Example: `{"NODE_ENV": "production", "PORT": "3000"}` |
 
----
 
 ## Job Protocol
 
@@ -146,7 +141,6 @@ run().catch(err => {
 }).finally(() => process.exit(0));
 ```
 
----
 
 ## How It Works
 
