@@ -7,7 +7,7 @@
       "command": "/opt/cronicle/plugins/easypanel-deploy.js",
       "lang": "javascript",
       "bg_color": "",
-      "notes": "Cria e faz deploy de um serviço app no Easypanel a partir de um repositório GitHub (build via Dockerfile). Monitora o deploy e reporta sucesso ou falha.\n\nNOTA: O token da API pode ser configurado por parâmetro (easypanel_token) ou via variável de ambiente EASYPANEL_TOKEN no container.",
+      "notes": "Creates and deploys an app service in Easypanel from a GitHub repository (Dockerfile build). Monitors the deploy and reports success or failure.\n\nNote: The API token must be set on the easypanel_token parameter.",
       "params": [
         {
           "id": "easypanel_url",
@@ -15,7 +15,7 @@
           "title": "Easypanel URL",
           "size": 40,
           "value": "",
-          "notes": "URL base do Easypanel sem barra final. Ex: https://panel.meudominio.com"
+          "notes": "Base URL of your Easypanel instance, without trailing slash. Example: https://panel.example.com"
         },
         {
           "id": "easypanel_token",
@@ -23,7 +23,7 @@
           "title": "Easypanel API Token",
           "size": 40,
           "value": "",
-          "notes": "Token de autenticação da API do Easypanel. Pode ficar vazio se EASYPANEL_TOKEN estiver configurado como variável de ambiente no container."
+          "notes": "Easypanel API token. Set the default value here so all events share the same token. To use a different token per event, change the field type to text."
         },
         {
           "id": "project_name",
@@ -31,7 +31,7 @@
           "title": "Project Name",
           "size": 30,
           "value": "",
-          "notes": "Nome do projeto no Easypanel. Apenas letras minúsculas, números, hífens e underscores."
+          "notes": "Easypanel project name. Only lowercase letters, numbers, hyphens and underscores are allowed."
         },
         {
           "id": "service_name",
@@ -39,14 +39,14 @@
           "title": "Service Name",
           "size": 30,
           "value": "",
-          "notes": "Nome base do serviço. Se 'Use as prefix' estiver marcado, o job ID será adicionado como sufixo para garantir unicidade."
+          "notes": "Base name for the ephemeral service. If 'Use service name as prefix' is checked, the job ID will be appended as a suffix to guarantee uniqueness."
         },
         {
           "id": "service_name_as_prefix",
           "type": "checkbox",
           "title": "Use service name as prefix (append job ID)",
           "value": 1,
-          "notes": "Se marcado, o nome final do serviço será: {service_name}-{job_id}. Se desmarcado, usará exatamente o nome informado (atenção: jobs simultâneos podem conflitar)."
+          "notes": "When checked, the final service name will be: {service_name}-{job_id}. When unchecked, the exact name is used (note: concurrent jobs may conflict)."
         },
         {
           "id": "github_owner",
@@ -54,7 +54,7 @@
           "title": "GitHub Owner",
           "size": 30,
           "value": "",
-          "notes": "Nome do usuário ou organização dona do repositório no GitHub."
+          "notes": "GitHub user or organization that owns the repository."
         },
         {
           "id": "github_repo",
@@ -62,7 +62,7 @@
           "title": "GitHub Repository",
           "size": 30,
           "value": "",
-          "notes": "Nome do repositório no GitHub (sem o owner)."
+          "notes": "Repository name (without the owner prefix)."
         },
         {
           "id": "github_branch",
@@ -70,7 +70,7 @@
           "title": "GitHub Branch",
           "size": 20,
           "value": "main",
-          "notes": "Branch do repositório a usar no build."
+          "notes": "Branch to build from."
         },
         {
           "id": "github_build_path",
@@ -78,7 +78,7 @@
           "title": "Build Path",
           "size": 20,
           "value": "/",
-          "notes": "Caminho dentro do repositório onde está o Dockerfile. Use '/' para a raiz."
+          "notes": "Path inside the repository where the Dockerfile is located. Use '/' for the root."
         },
         {
           "id": "dockerfile",
@@ -86,7 +86,7 @@
           "title": "Dockerfile Path",
           "size": 20,
           "value": "Dockerfile",
-          "notes": "Caminho do Dockerfile relativo ao Build Path. Ex: Dockerfile ou docker/Dockerfile"
+          "notes": "Dockerfile path, relative to Build Path. Example: Dockerfile or docker/Dockerfile"
         },
         {
           "id": "run_command",
@@ -94,7 +94,7 @@
           "title": "Runtime Command (optional)",
           "size": 50,
           "value": "",
-          "notes": "Comando de runtime para sobrescrever o CMD do Dockerfile. Corresponde ao campo 'Advanced → Command' no Easypanel. Deixe vazio para usar o CMD padrão."
+          "notes": "Runtime command to override the Dockerfile CMD. Corresponds to the 'Advanced -> Command' field in Easypanel. Leave empty to use the image default."
         },
         {
           "id": "env_vars",
@@ -102,7 +102,7 @@
           "title": "Environment Variables (JSON)",
           "rows": 5,
           "value": "{}",
-          "notes": "Variáveis de ambiente em formato JSON. Ex: {\"NODE_ENV\": \"production\", \"PORT\": \"3000\"}"
+          "notes": "Environment variables as a JSON object. Example: {\"NODE_ENV\": \"production\", \"PORT\": \"3000\"}"
         }
       ]
     }
