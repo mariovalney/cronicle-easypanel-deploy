@@ -1,0 +1,259 @@
+{
+  "echo": 1,
+  "foreground": 1,
+  "manager": 1,
+  "color": 0,
+  "debug": 0,
+  "base_app_url": "http://localhost:3012",
+  "email_from": "",
+  "smtp_hostname": "",
+  "smtp_port": 587,
+  "max_emails_per_day": 0,
+  "log_dir": "logs",
+  "log_filename": "[component].log",
+  "log_columns": [
+    "hires_epoch",
+    "date",
+    "hostname",
+    "pid",
+    "component",
+    "category",
+    "code",
+    "msg",
+    "data"
+  ],
+  "log_archive_path": "logs/archives/[yyyy]/[mm]/[dd]/[filename]-[yyyy]-[mm]-[dd].log.gz",
+  "log_crashes": true,
+  "pid_file": "logs/cronicled.pid",
+  "copy_job_logs_to": "",
+  "queue_dir": "queue",
+  "debug_level": 3,
+  "maintenance": "04:00",
+  "list_row_max": 10000,
+  "job_data_expire_days": 30,
+  "child_kill_timeout": 10,
+  "dead_job_timeout": 120,
+  "manager_ping_freq": 20,
+  "manager_ping_timeout": 60,
+  "udp_broadcast_port": 3014,
+  "scheduler_startup_grace": 10,
+  "universal_web_hook": "",
+  "track_manual_jobs": false,
+  "max_jobs": 0,
+  "server_comm_use_hostnames": true,
+  "web_direct_connect": 0,
+  "web_socket_use_hostnames": true,
+  "job_memory_max": 1073741824,
+  "job_memory_sustain": 0,
+  "job_cpu_max": 0,
+  "job_cpu_sustain": 0,
+  "job_log_max_size": 0,
+  "job_env": {
+    "BASE_URL": "http://localhost:3012",
+    "BASE_APP_URL": "http://localhost:3012"
+  },
+  "protect_job_log": true,
+  "web_hook_text_templates": {
+    "job_start": "🚀 *[event_title]* started on [hostname] <[job_details_url] | More details>",
+    "job_complete": "✔️ *[event_title]* completed successfully on [hostname] <[job_details_url] | More details>",
+    "job_warning": "⚠️ *[event_title]* completed with warning on [hostname]: Warning: _*[description]*_ <[job_details_url] | More details>",
+    "job_failure": "❌ *[event_title]* failed on [hostname]: Error: _*[description]*_ <[job_details_url] | More details>",
+    "job_launch_failure": "💥 Failed to launch *[event_title]*:\n*[description]*\n<[edit_event_url] | More details>"
+  },
+  "client": {
+    "name": "Cronicle",
+    "debug": 0,
+    "default_password_type": "password",
+    "privilege_list": [
+      { "id": "admin", "title": "Administrator" },
+      { "id": "create_events", "title": "Create Events" },
+      { "id": "edit_events", "title": "Edit Events" },
+      { "id": "delete_events", "title": "Delete Events" },
+      { "id": "run_events", "title": "Run Events" },
+      { "id": "abort_events", "title": "Abort Events" },
+      { "id": "state_update", "title": "Toggle Scheduler" },
+      { "id": "disable_enable_events", "title": "Disable/Enable Events" }
+    ],
+    "new_event_template": {
+      "enabled": 1,
+      "params": {},
+      "timing": { "minutes": [0] },
+      "max_children": 1,
+      "timeout": 3600,
+      "catch_up": 0,
+      "queue_max": 1000
+    }
+  },
+  "oauth": {
+    "enabled": false,
+    "insecure": false,
+    "client_id": "",
+    "client_secret": "",
+    "redirect_uri": "",
+    "authorize_url": "",
+    "token_url": "",
+    "user_url": "https://graph.microsoft.com/v1.0/me",
+    "user_attribute": "userPrincipalName",
+    "scope": "openid profile email User.Read"
+  },
+  "Storage": {
+    "engine": "Filesystem",
+    "list_page_size": 50,
+    "concurrency": 4,
+    "log_event_types": {
+      "get": 0,
+      "put": 0,
+      "head": 0,
+      "delete": 0,
+      "expire_set": 0
+    },
+    "transactions": false,
+    "trans_auto_recover": false,
+    "Filesystem": {
+      "base_dir": "data",
+      "key_namespaces": 1
+    },
+    "hash_page_size": 50,
+    "maintenance": 0,
+    "max_recent_events": 0,
+    "cache_key_match": "^global/",
+    "expiration_updates": false,
+    "lower_case_keys": true,
+    "queue_timeout": 30000
+  },
+  "WebServer": {
+    "http_port": 3012,
+    "http_htdocs_dir": "htdocs",
+    "http_max_upload_size": 104857600,
+    "http_static_ttl": 3600,
+    "http_static_index": "index.html",
+    "http_server_signature": "Cronicle 1.0",
+    "http_gzip_text": true,
+    "http_timeout": 30,
+    "http_regex_json": "(text|javascript|js|json)",
+    "http_response_headers": {},
+    "http_uri_response_headers": {
+      "(/|\\.html)$": {
+        "X-Frame-Options": "DENY",
+        "X-Content-Type-Options": "nosniff",
+        "Referrer-Policy": "strict-origin-when-cross-origin",
+        "Permissions-Policy": "camera=(), microphone=(), geolocation=(), fullscreen=()"
+      }
+    },
+    "https": false,
+    "https_port": 3013,
+    "https_cert_file": "conf/ssl.crt",
+    "https_key_file": "conf/ssl.key",
+    "https_force": false,
+    "https_timeout": 30,
+    "https_header_detect": {
+      "Front-End-Https": "^on$",
+      "X-Url-Scheme": "^https$",
+      "X-Forwarded-Protocol": "^https$",
+      "X-Forwarded-Proto": "^https$",
+      "X-Forwarded-Ssl": "^on$"
+    },
+    "http_private_ip_ranges": [
+      "127.0.0.1",
+      "10.0.0.0/8",
+      "172.16.0.0/12",
+      "192.168.0.0/16",
+      "::1/128",
+      "fd00::/8",
+      "169.254.0.0/16",
+      "fe80::/10"
+    ],
+    "http_regex_text": "(text|javascript|json|css|html)",
+    "http_keep_alives": "default",
+    "http_temp_dir": "/tmp",
+    "http_gzip_opts": { "level": -1, "memLevel": 8 },
+    "http_brotli_opts": {
+      "chunkSize": 16384,
+      "params": { "0": 1, "1": 4 }
+    },
+    "http_compress_text": false,
+    "http_enable_brotli": false,
+    "http_default_acl": [
+      "127.0.0.1",
+      "10.0.0.0/8",
+      "172.16.0.0/12",
+      "192.168.0.0/16",
+      "::1/128",
+      "fd00::/8",
+      "169.254.0.0/16",
+      "fe80::/10"
+    ],
+    "http_blacklist": [],
+    "http_allow_hosts": [],
+    "http_log_requests": false,
+    "http_log_request_details": false,
+    "http_log_body_max": 32768,
+    "http_log_perf": false,
+    "http_perf_threshold_ms": 100,
+    "http_perf_report": false,
+    "http_recent_requests": 10,
+    "http_max_connections": 0,
+    "http_max_requests_per_connection": 0,
+    "http_max_concurrent_requests": 0,
+    "http_max_queue_length": 0,
+    "http_max_queue_active": 0,
+    "http_queue_skip_uri_match": false,
+    "http_clean_headers": false,
+    "http_log_socket_errors": true,
+    "http_full_uri_match": false,
+    "http_flatten_query": false,
+    "http_request_timeout": 0,
+    "http_req_max_dump_enabled": false,
+    "http_req_max_dump_dir": "",
+    "http_req_max_dump_debounce": 10,
+    "http_code_response_headers": null,
+    "http_legacy_callback_support": false,
+    "https_cert_poll_ms": 60000
+  },
+  "User": {
+    "session_expire_days": 30,
+    "max_failed_logins_per_hour": 5,
+    "max_forgot_passwords_per_hour": 3,
+    "free_accounts": false,
+    "sort_global_users": true,
+    "use_bcrypt": true,
+    "email_templates": {
+      "welcome_new_user": "conf/emails/welcome_new_user.txt",
+      "changed_password": "conf/emails/changed_password.txt",
+      "recover_password": "conf/emails/recover_password.txt"
+    },
+    "default_privileges": {
+      "admin": 0,
+      "create_events": 1,
+      "edit_events": 1,
+      "delete_events": 1,
+      "run_events": 0,
+      "abort_events": 0,
+      "state_update": 0,
+      "disable_enable_events": 0
+    },
+    "smtp_hostname": "",
+    "self_delete": 0,
+    "valid_username_match": "^[\\w\\@\\-\\.]+$",
+    "block_username_match": "^(abuse|admin|administrator|localhost|127\\.0\\.0\\.1|nobody|noreply|root|support|sysadmin|webmanager|www|god|staff|null|0|constructor|__defineGetter__|__defineSetter__|hasOwnProperty|__lookupGetter__|__lookupSetter__|isPrototypeOf|propertyIsEnumerable|toString|valueOf|__proto__|toLocaleString)$"
+  },
+  "mail_options": {
+    "auth": {
+      "user": "",
+      "pass": ""
+    },
+    "secure": false,
+    "tls": {
+      "rejectUnauthorized": false,
+      "ciphers": "SSLv3"
+    }
+  },
+  "admin_web_hook": "",
+  "custom_live_log_socket_url": "",
+  "oninfo_web_hook": "",
+  "onupdate_web_hook": "",
+  "ui": {
+    "live_log_ws": false,
+    "hh24": true
+  }
+}
