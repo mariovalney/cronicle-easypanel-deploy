@@ -26,12 +26,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added Easypanel 2.31.0+ minimum version requirement to Prerequisites section in README
 - Removed outdated tRPC reference from How It Works section in README
 
-## [1.0.1] - 2026-05-14
-
-### Changed
-
-- Translated all parameter notes and descriptions in `conf/easypanel-plugin.json` from Portuguese to English
-
 ## [1.0.0] - 2026-05-14
 
 Initial release.
@@ -45,6 +39,5 @@ Initial release.
 - `README.md`: full documentation including prerequisites, installation, parameters, job protocol, and flow description
 
 [Unreleased]: https://github.com/mariovalney/cronicle-easypanel-deploy/compare/v2.0.0...HEAD
-[2.0.0]: https://github.com/mariovalney/cronicle-easypanel-deploy/compare/v1.0.1...v2.0.0
-[1.0.1]: https://github.com/mariovalney/cronicle-easypanel-deploy/compare/v1.0.0...v1.0.1
-[1.0.0]: https://github.com/mariovalney/cronicle-easypanel-deploy/releases/tag/v1.0.0
+[2.0.0]: https://github.com/mariovalney/cronicle-easypanel-deploy/compare/1.0.0...v2.0.0
+[1.0.0]: https://github.com/mariovalney/cronicle-easypanel-deploy/releases/tag/1.0.0
