@@ -27,7 +27,8 @@ This pattern is useful for running batch jobs, data pipelines, or any workload t
 
 ## Prerequisites
 
-- **Easypanel** with **Advanced Logs** enabled (required for reading container logs via Loki)
+- **Easypanel 2.31.0 or later** — this plugin uses the oRPC API (`/api/rpc/*`) introduced in that version. Earlier versions used a different API (tRPC) and are not supported.
+- **Advanced Logs** enabled in Easypanel (required for reading container logs via Loki)
 - A GitHub repository containing a `Dockerfile` that runs your job
 - An Easypanel API token
 
@@ -129,7 +130,7 @@ See [`examples/hello-world/main.py`](examples/hello-world/main.py) for a working
 2. **Validate:** Required parameters are checked; the plugin exits with failure if any are missing.
 3. **Resolve service name:** The service name is built from `service_name` plus the job ID (if `service_name_as_prefix` is checked), then sanitized to match Easypanel naming rules.
 4. **Check for conflicts:** If a service with the same name already exists, the plugin fails immediately to avoid overwriting running workloads.
-5. **Create service:** The plugin calls the Easypanel tRPC API to create an app service from the specified GitHub repository.
+5. **Create service:** The plugin calls the Easypanel API to create an app service from the specified GitHub repository.
 6. **Wait for deploy:** Polls the Easypanel actions API until the build and startup are complete. Reports incremental progress to Cronicle during this phase.
 7. **Wait for job result:** Polls the Loki log API until a line with `"complete": 1` appears in the container's stdout. Progress lines (`"progress": N`) are forwarded to Cronicle in real time.
 8. **Destroy service:** The ephemeral service is always destroyed after the job finishes, regardless of success or failure.
