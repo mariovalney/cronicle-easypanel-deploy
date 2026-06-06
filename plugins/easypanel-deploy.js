@@ -81,7 +81,7 @@ function request(options) {
   });
 }
 
-// ─── Easypanel API (tRPC) ─────────────────────────────────────────────────────
+// ─── Easypanel API (oRPC) ─────────────────────────────────────────────────────
 
 function makeHeaders(token) {
   return {
@@ -90,8 +90,9 @@ function makeHeaders(token) {
   };
 }
 
-async function trpcMutation(baseUrl, token, procedure, body) {
-  const url = `${baseUrl}/api/trpc/${procedure}`;
+async function rpcMutation(baseUrl, token, procedure, body) {
+  const path = procedure.replace(/\./g, '/');
+  const url = `${baseUrl}/api/rpc/${path}`;
   const res = await request({
     method: 'POST',
     url,
@@ -101,30 +102,18 @@ async function trpcMutation(baseUrl, token, procedure, body) {
   return res;
 }
 
-async function trpcQuery(baseUrl, token, procedure, input) {
-  const encoded = encodeURIComponent(JSON.stringify({ json: input }));
-  const url = `${baseUrl}/api/trpc/${procedure}?input=${encoded}`;
-  const res = await request({
-    method: 'GET',
-    url,
-    headers: makeHeaders(token),
-  });
-  return res;
-}
-
 async function inspectService(baseUrl, token, projectName, serviceName) {
-  const res = await trpcQuery(baseUrl, token, 'services.app.inspectService', {
-    projectName,
-    serviceName,
+  const res = await rpcMutation(baseUrl, token, 'services.app.inspectService', {
+    json: { projectName, serviceName },
   });
-  if (res.status === 200 && res.body?.result?.data?.json) {
-    return res.body.result.data.json;
+  if (res.status === 200 && res.body?.json) {
+    return res.body.json;
   }
   return null;
 }
 
 async function destroyService(baseUrl, token, projectName, serviceName) {
-  const res = await trpcMutation(baseUrl, token, 'services.app.destroyService', {
+  const res = await rpcMutation(baseUrl, token, 'services.app.destroyService', {
     json: { projectName, serviceName },
   });
   if (res.status !== 200) {
@@ -156,46 +145,39 @@ async function createService(baseUrl, token, params) {
     },
   };
 
-  const res = await trpcMutation(baseUrl, token, 'services.app.createService', body);
+  const res = await rpcMutation(baseUrl, token, 'services.app.createService', body);
   if (res.status !== 200) {
-    const msg = res.body?.error?.message || JSON.stringify(res.body);
+    const msg = res.body?.error?.json?.message || res.body?.error?.message || JSON.stringify(res.body);
     throw new Error(`Failed to create service: HTTP ${res.status} - ${msg}`);
   }
 }
 
 async function deployService(baseUrl, token, projectName, serviceName) {
-  const res = await trpcMutation(baseUrl, token, 'services.app.deployService', {
+  const res = await rpcMutation(baseUrl, token, 'services.app.deployService', {
     json: { projectName, serviceName, forceRebuild: true },
   });
   if (res.status !== 200) {
-    const msg = res.body?.error?.message || JSON.stringify(res.body);
+    const msg = res.body?.error?.json?.message || res.body?.error?.message || JSON.stringify(res.body);
     throw new Error(`Failed to start deploy: HTTP ${res.status} - ${msg}`);
   }
 }
 
 async function getLatestDeployAction(baseUrl, token, projectName, serviceName) {
-  const res = await trpcQuery(baseUrl, token, 'actions.listActions', {
-    projectName,
-    serviceName,
-    type: 'deployment',
-    limit: 1,
+  const res = await rpcMutation(baseUrl, token, 'actions.listActions', {
+    json: { projectName, serviceName, type: 'deployment', limit: 1 },
   });
 
   if (res.status !== 200) return null;
 
-  const items = res.body?.result?.data?.json;
+  const items = res.body?.json;
   if (!Array.isArray(items) || items.length === 0) return null;
 
   return items[0];
 }
 
 async function getServiceLogs(baseUrl, token, projectName, serviceName, startNs) {
-  const res = await trpcQuery(baseUrl, token, 'logs.queryServiceLogs', {
-    projectName,
-    serviceName,
-    limit: 100,
-    stream: 'stdout',
-    start: startNs,
+  const res = await rpcMutation(baseUrl, token, 'logs.queryServiceLogs', {
+    json: { projectName, serviceName, limit: 100, stream: 'stdout', start: startNs },
   });
 
   if (res.status === 500) {
@@ -208,7 +190,7 @@ async function getServiceLogs(baseUrl, token, projectName, serviceName, startNs)
     throw new Error(`Failed to fetch logs: HTTP ${res.status}`);
   }
 
-  return res.body?.result?.data?.json?.entries || [];
+  return res.body?.json?.entries || [];
 }
 
 function parseJobResult(entries) {
@@ -289,12 +271,11 @@ async function waitForDeploy(baseUrl, token, projectName, serviceName) {
 
 async function getServiceStats(baseUrl, token, projectName, serviceName) {
   try {
-    const res = await trpcQuery(baseUrl, token, 'monitorOld.getServiceStats', {
-      projectName,
-      serviceName,
+    const res = await rpcMutation(baseUrl, token, 'monitorOld.getServiceStats', {
+      json: { projectName, serviceName },
     });
-    if (res.status === 200 && res.body?.result?.data?.json) {
-      return res.body.result.data.json;
+    if (res.status === 200 && res.body?.json) {
+      return res.body.json;
     }
   } catch {
     // stats are informational, not critical
