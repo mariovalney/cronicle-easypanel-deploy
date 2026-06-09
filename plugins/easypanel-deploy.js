@@ -431,22 +431,47 @@ async function main() {
   }
 
   log('Creating service in Easypanel...');
-  await createService(baseUrl, token, {
-    projectName,
-    serviceName,
-    githubOwner: params.github_owner.trim(),
-    githubRepo: params.github_repo.trim(),
-    githubBranch: params.github_branch.trim(),
-    githubBuildPath: (params.github_build_path || '/').trim(),
-    dockerfile: (params.dockerfile || 'Dockerfile').trim(),
-    runCommand: (params.run_command || '').trim() || null,
-    envString,
-  });
+  try {
+    await createService(baseUrl, token, {
+      projectName,
+      serviceName,
+      githubOwner: params.github_owner.trim(),
+      githubRepo: params.github_repo.trim(),
+      githubBranch: params.github_branch.trim(),
+      githubBuildPath: (params.github_build_path || '/').trim(),
+      dockerfile: (params.dockerfile || 'Dockerfile').trim(),
+      runCommand: (params.run_command || '').trim() || null,
+      envString,
+    });
+  } catch (createErr) {
+    const partial = await inspectService(baseUrl, token, projectName, serviceName);
+    if (partial) {
+      log('Service creation failed but service was partially created. Rolling back...');
+      try {
+        await destroyService(baseUrl, token, projectName, serviceName);
+        log('Partial service destroyed.');
+      } catch (destroyErr) {
+        log(`Warning: failed to destroy partial service: ${destroyErr.message}`);
+      }
+    }
+    throw createErr;
+  }
   log('Service created successfully.');
 
-  await waitForDeploy(baseUrl, token, projectName, serviceName);
-
-  const { result, logs } = await waitForJobComplete(baseUrl, token, projectName, serviceName);
+  let result, logs;
+  try {
+    await waitForDeploy(baseUrl, token, projectName, serviceName);
+    ({ result, logs } = await waitForJobComplete(baseUrl, token, projectName, serviceName));
+  } catch (runErr) {
+    log('Error during execution. Rolling back service...');
+    try {
+      await destroyService(baseUrl, token, projectName, serviceName);
+      log('Service destroyed.');
+    } catch (destroyErr) {
+      log(`Warning: failed to destroy service: ${destroyErr.message}`);
+    }
+    throw runErr;
+  }
 
   log('Destroying service...');
   await destroyService(baseUrl, token, projectName, serviceName);
