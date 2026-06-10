@@ -103,6 +103,14 @@
           "rows": 5,
           "value": "{}",
           "notes": "Environment variables as a JSON object. Example: {\"NODE_ENV\": \"production\", \"PORT\": \"3000\"}"
+        },
+        {
+          "id": "mounts",
+          "type": "textarea",
+          "title": "Storage (JSON)",
+          "rows": 5,
+          "value": "",
+          "notes": "Volumes/mounts as a JSON array. Example: [{\"hostPath\": \"/etc/easypanel/volumes/recordings\", \"mountPath\": \"/recordings\", \"type\": \"bind\"}]. Leave empty for no mounts."
         }
       ]
     }

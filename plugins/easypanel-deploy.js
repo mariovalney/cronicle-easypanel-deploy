@@ -139,6 +139,7 @@ async function createService(baseUrl, token, params) {
         file: params.dockerfile || 'Dockerfile',
       },
       env: params.envString || '',
+      mounts: params.mounts || [],
       deploy: {
         command: params.runCommand || null,
       },
@@ -430,6 +431,18 @@ async function main() {
     }
   }
 
+  let mounts = [];
+  if (params.mounts && params.mounts.trim()) {
+    try {
+      mounts = JSON.parse(params.mounts);
+    } catch {
+      fail('The "mounts" field is not valid JSON. Example: [{"hostPath": "/host/path", "mountPath": "/container/path", "type": "bind"}]');
+    }
+    if (!Array.isArray(mounts)) {
+      fail('The "mounts" field must be a JSON array. Example: [{"hostPath": "/host/path", "mountPath": "/container/path", "type": "bind"}]');
+    }
+  }
+
   log('Creating service in Easypanel...');
   try {
     await createService(baseUrl, token, {
@@ -442,6 +455,7 @@ async function main() {
       dockerfile: (params.dockerfile || 'Dockerfile').trim(),
       runCommand: (params.run_command || '').trim() || null,
       envString,
+      mounts,
     });
   } catch (createErr) {
     const partial = await inspectService(baseUrl, token, projectName, serviceName);
