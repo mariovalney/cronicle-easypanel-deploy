@@ -89,6 +89,7 @@ Run this command inside the Cronicle container after startup:
 | `dockerfile` | text | No | `Dockerfile` | Dockerfile path, relative to Build Path |
 | `run_command` | text | No | - | Runtime command to override the Dockerfile `CMD`. Corresponds to **Advanced &rarr; Command** in Easypanel. Leave empty to use the image default |
 | `env_vars` | textarea | No | `{}` | Environment variables passed to the container, as a JSON object. Example: `{"NODE_ENV": "production", "PORT": "3000"}` |
+| `mounts` | textarea | No | - | Volumes/mounts as a JSON array. Example: `[{"hostPath": "/etc/easypanel/volumes/recordings", "mountPath": "/recordings", "type": "bind"}]`. Leave empty for no mounts |
 
 
 ## Job Protocol
