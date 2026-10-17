@@ -7,7 +7,7 @@
       "command": "/opt/cronicle/plugins/easypanel-deploy.js",
       "lang": "javascript",
       "bg_color": "",
-      "notes": "Creates and deploys an app service in Easypanel from a GitHub repository (Dockerfile build). Monitors the deploy and reports success or failure.\n\nNote: set EASYPANEL_DEPLOY_URL and EASYPANEL_DEPLOY_TOKEN in the Cronicle container env or in the plugin Secret, and put the service secrets in the event Secret. Parameters are written in plain text to the Cronicle transaction log.",
+      "notes": "Creates and deploys an app service in Easypanel from a GitHub repository (Dockerfile build). Monitors the deploy and reports success or failure.\n\nNote: set EASYPANEL_DEPLOY_TOKEN (and EASYPANEL_DEPLOY_URL, unless easypanel_url is filled) in the Cronicle container env or in the plugin Secret, and put the service secrets in the event Secret. Parameters are written in plain text to the Cronicle transaction log.",
       "params": [
         {
           "id": "easypanel_url",
@@ -15,15 +15,7 @@
           "title": "Easypanel URL",
           "size": 40,
           "value": "",
-          "notes": "Base URL of your Easypanel instance, without trailing slash. Example: https://panel.example.com. Can be left empty when EASYPANEL_DEPLOY_URL is set."
-        },
-        {
-          "id": "easypanel_token",
-          "type": "password",
-          "title": "Easypanel API Token",
-          "size": 40,
-          "value": "",
-          "notes": "Leave empty and set EASYPANEL_DEPLOY_TOKEN instead. Parameters, including this one, are written in plain text to the Cronicle transaction log."
+          "notes": "Base URL of your Easypanel instance, without trailing slash. Example: https://panel.example.com. Leave empty to use EASYPANEL_DEPLOY_URL."
         },
         {
           "id": "project_name",
@@ -111,6 +103,14 @@
           "rows": 5,
           "value": "",
           "notes": "Volumes/mounts as a JSON array. Example: [{\"hostPath\": \"/etc/easypanel/volumes/recordings\", \"mountPath\": \"/recordings\", \"type\": \"bind\"}]. Leave empty for no mounts."
+        },
+        {
+          "id": "override",
+          "type": "textarea",
+          "title": "Override (JSON)",
+          "rows": 5,
+          "value": "",
+          "notes": "JSON object deep-merged over the final payload sent to Easypanel, overriding any value. Example: {\"deploy\": {\"replicas\": 2}}. Leave empty to override nothing."
         }
       ]
     }

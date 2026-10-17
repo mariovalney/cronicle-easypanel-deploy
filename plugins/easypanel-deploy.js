@@ -9,8 +9,22 @@ const http = require('http');
 
 // ─── Configuration ────────────────────────────────────────────────────────────
 
-const POLL_INTERVAL_MS = 5000;
-const TIMEOUT_MS = 24 * 60 * 60 * 1000;
+// Poll interval, HTTP timeout and deploy action timeout can be overridden by env, for the
+// automated tests and for environments with unusual latency.
+const POLL_INTERVAL_MS = parseInt(process.env.EASYPANEL_POLL_INTERVAL_MS, 10) || 5000;
+const HTTP_TIMEOUT_MS = parseInt(process.env.EASYPANEL_HTTP_TIMEOUT_MS, 10) || 120 * 1000;
+// Separate from DEPLOY_TIMEOUT_MS: if no deploy action ever shows up (e.g. an orphan service that
+// never triggered a deploy), there is no point in waiting the full 30 minutes to give up.
+const DEPLOY_ACTION_TIMEOUT_MS = parseInt(process.env.EASYPANEL_DEPLOY_ACTION_TIMEOUT_MS, 10) || 5 * 60 * 1000;
+const DEPLOY_TIMEOUT_MS = 30 * 60 * 1000;
+const JOB_TIMEOUT_MS = 24 * 60 * 60 * 1000;
+const MAX_LIST_ACTION_FAILURES = 5;
+
+// Maximum lines per Loki query. 1000 is the cap enforced by the Easypanel API itself; larger
+// values are rejected with BAD_REQUEST.
+const LOG_QUERY_LIMIT = 1000;
+const MAX_LOG_QUERY_FAILURES = 5;
+const LOG_HEARTBEAT_EVERY = 12;
 
 const STATUS_SUCCESS = ['done', 'success', 'completed'];
 const STATUS_FAILURE = ['error', 'failed', 'cancelled'];
@@ -50,6 +64,9 @@ function fail(description) {
 
 // ─── HTTP utilities ───────────────────────────────────────────────────────────
 
+// Always applies HTTP_TIMEOUT_MS: a connection that hangs without a socket error would otherwise
+// leave the Promise pending forever, and the deploy and job timeouts are only checked between
+// requests.
 function request(options) {
   return new Promise((resolve, reject) => {
     const url = new URL(options.url);
@@ -81,142 +98,147 @@ function request(options) {
       });
     });
 
-    req.on('error', reject);
+    req.setTimeout(HTTP_TIMEOUT_MS, () => {
+      req.destroy(new Error(`Timeout of ${HTTP_TIMEOUT_MS / 1000}s on request to ${url.pathname}`));
+    });
+
+    // Socket error (the timeout above or a connection failure): no response was received, so we
+    // don't know whether the server processed the request. Flagged so callers can treat it as
+    // "unknown outcome" instead of "failed" where that matters.
+    req.on('error', (err) => {
+      err.noResponse = true;
+      reject(err);
+    });
     if (body) req.write(body);
     req.end();
   });
 }
 
-// ─── Easypanel API (oRPC) ─────────────────────────────────────────────────────
+// ─── Easypanel API (REST) ─────────────────────────────────────────────────────
 
 function makeHeaders(token) {
   return {
     'Authorization': `Bearer ${token}`,
-    'Content-Type': 'application/json',
   };
 }
 
-async function rpcMutation(baseUrl, token, procedure, body) {
-  const path = procedure.replace(/\./g, '/');
-  const url = `${baseUrl}/api/rpc/${path}`;
-  const res = await request({
+async function apiGet(baseUrl, token, operation, query) {
+  const url = new URL(`${baseUrl}/api/${operation}`);
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== undefined && value !== null) url.searchParams.set(key, String(value));
+  }
+  return request({
+    method: 'GET',
+    url: url.toString(),
+    headers: makeHeaders(token),
+  });
+}
+
+async function apiPost(baseUrl, token, operation, body) {
+  return request({
     method: 'POST',
-    url,
+    url: `${baseUrl}/api/${operation}`,
     headers: makeHeaders(token),
     body,
   });
-  return res;
 }
 
+// Error body format: { code, status, message, data?: { zodErrors } }
+function apiErrorMessage(res) {
+  const body = res.body;
+  if (body && typeof body === 'object' && body.message) {
+    const zod = body.data?.zodErrors;
+    return zod ? `${body.message} ${JSON.stringify(zod)}` : body.message;
+  }
+  return typeof body === 'string' ? body : JSON.stringify(body);
+}
+
+// Returns the service, or null when it does not exist (the API answers 404 NOT_FOUND).
 async function inspectService(baseUrl, token, projectName, serviceName) {
-  const res = await rpcMutation(baseUrl, token, 'services.app.inspectService', {
-    json: { projectName, serviceName },
-  });
-  if (res.status === 200 && res.body?.json) {
-    return res.body.json;
+  const res = await apiGet(baseUrl, token, 'inspectAppService', { projectName, serviceName });
+  if (res.status === 200 && res.body && typeof res.body === 'object') {
+    return res.body;
   }
   return null;
 }
 
 async function destroyService(baseUrl, token, projectName, serviceName) {
-  const res = await rpcMutation(baseUrl, token, 'services.app.destroyService', {
-    json: { projectName, serviceName },
-  });
+  const res = await apiPost(baseUrl, token, 'destroyAppService', { projectName, serviceName });
   if (res.status !== 200) {
-    throw new Error(`Failed to destroy service: HTTP ${res.status}`);
+    throw new Error(`Failed to destroy service: HTTP ${res.status} - ${apiErrorMessage(res)}`);
   }
 }
 
+// Creating the service already starts the deploy; there is no separate deploy call.
 async function createService(baseUrl, token, params) {
   const body = {
-    json: {
-      projectName: params.projectName,
-      serviceName: params.serviceName,
-      source: {
-        type: 'github',
-        owner: params.githubOwner,
-        repo: params.githubRepo,
-        ref: params.githubBranch,
-        path: params.githubBuildPath || '/',
-        autoDeploy: false,
-      },
-      build: {
-        type: 'dockerfile',
-        file: params.dockerfile || 'Dockerfile',
-      },
-      env: params.envString || '',
-      mounts: params.mounts || [],
-      deploy: {
-        command: params.runCommand || null,
-      },
+    projectName: params.projectName,
+    serviceName: params.serviceName,
+    source: {
+      type: 'github',
+      owner: params.githubOwner,
+      repo: params.githubRepo,
+      ref: params.githubBranch,
+      path: params.githubBuildPath || '/',
+      autoDeploy: false,
+    },
+    build: {
+      type: 'dockerfile',
+      file: params.dockerfile || 'Dockerfile',
+    },
+    env: params.envString || '',
+    mounts: params.mounts || [],
+    deploy: {
+      command: params.runCommand || null,
     },
   };
 
-  const res = await rpcMutation(baseUrl, token, 'services.app.createService', body);
+  if (params.override) {
+    deepMerge(body, params.override);
+  }
+
+  const res = await apiPost(baseUrl, token, 'createAppService', body);
   if (res.status !== 200) {
-    const msg = res.body?.error?.json?.message || res.body?.error?.message || JSON.stringify(res.body);
-    throw new Error(`Failed to create service: HTTP ${res.status} - ${msg}`);
+    throw new Error(`Failed to create service: HTTP ${res.status} - ${apiErrorMessage(res)}`);
   }
 }
 
-async function deployService(baseUrl, token, projectName, serviceName) {
-  const res = await rpcMutation(baseUrl, token, 'services.app.deployService', {
-    json: { projectName, serviceName, forceRebuild: true },
-  });
-  if (res.status !== 200) {
-    const msg = res.body?.error?.json?.message || res.body?.error?.message || JSON.stringify(res.body);
-    throw new Error(`Failed to start deploy: HTTP ${res.status} - ${msg}`);
-  }
-}
-
+// Returns the latest deploy action, or null if none exists yet. Throws on HTTP failure so the
+// caller decides how to handle it.
 async function getLatestDeployAction(baseUrl, token, projectName, serviceName) {
-  const res = await rpcMutation(baseUrl, token, 'actions.listActions', {
-    json: { projectName, serviceName, type: 'deployment', limit: 1 },
+  const res = await apiGet(baseUrl, token, 'listActions', {
+    projectName, serviceName, type: 'deployment', limit: 1,
   });
 
-  if (res.status !== 200) return null;
+  if (res.status !== 200) {
+    throw new Error(`Failed to list actions: HTTP ${res.status} - ${apiErrorMessage(res)}`);
+  }
 
-  const items = res.body?.json;
+  const items = res.body;
   if (!Array.isArray(items) || items.length === 0) return null;
 
   return items[0];
 }
 
+// The API returns the LOG_QUERY_LIMIT OLDEST lines from `startNs`, and `start` is inclusive.
+// There is no direction parameter: callers must advance `startNs` to page.
+// Without Advanced Logs, 2.36.0 answers HTTP 400 "fetch failed" (2.32.x answered HTTP 500).
 async function getServiceLogs(baseUrl, token, projectName, serviceName, startNs) {
-  const res = await rpcMutation(baseUrl, token, 'logs.queryServiceLogs', {
-    json: { projectName, serviceName, limit: 100, stream: 'stdout', start: startNs },
+  const res = await apiGet(baseUrl, token, 'queryServiceLogs', {
+    projectName, serviceName, limit: LOG_QUERY_LIMIT, stream: 'stdout', start: startNs,
   });
 
-  if (res.status === 500) {
+  if (res.status === 500 || (res.status === 400 && res.body?.message === 'fetch failed')) {
     throw new Error(
       'Could not read service logs. Make sure "Advanced Logs" is enabled in Easypanel (requires Loki).'
     );
   }
 
   if (res.status !== 200) {
-    throw new Error(`Failed to fetch logs: HTTP ${res.status}`);
+    throw new Error(`Failed to fetch logs: HTTP ${res.status} - ${apiErrorMessage(res)}`);
   }
 
-  return res.body?.json?.entries || [];
-}
-
-function parseJobResult(entries) {
-  if (!Array.isArray(entries) || entries.length === 0) return null;
-
-  for (const entry of entries) {
-    for (const [_timestamp, line] of entry.values) {
-      try {
-        const jsonStart = line.indexOf('{');
-        if (jsonStart === -1) continue;
-        const parsed = JSON.parse(line.slice(jsonStart));
-        if (parsed.complete === 1) return parsed;
-      } catch {
-        // free-form text line, ignore
-      }
-    }
-  }
-
-  return null;
+  return res.body?.entries || [];
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -244,34 +266,71 @@ function eventSecretToString(names, env) {
     .join('\n');
 }
 
+// Arrays and primitives in `override` replace the target value; objects are merged recursively.
+function deepMerge(target, override) {
+  for (const [key, value] of Object.entries(override)) {
+    if (value !== null && typeof value === 'object' && !Array.isArray(value) &&
+        target[key] !== null && typeof target[key] === 'object' && !Array.isArray(target[key])) {
+      deepMerge(target[key], value);
+    } else {
+      target[key] = value;
+    }
+  }
+  return target;
+}
+
 function sanitizeServiceName(name) {
   return name.toLowerCase().replace(/[^a-z0-9-_]/g, '-');
 }
 
 // ─── Polling loops ────────────────────────────────────────────────────────────
 
+// Two timeouts: if the deploy action never shows up, give up after DEPLOY_ACTION_TIMEOUT_MS;
+// once it shows up, DEPLOY_TIMEOUT_MS applies to the deploy itself. Up to
+// MAX_LIST_ACTION_FAILURES consecutive query failures are tolerated, so a single network error
+// does not abort a deploy that is progressing normally.
 async function waitForDeploy(baseUrl, token, projectName, serviceName) {
   const startTime = Date.now();
+  let actionSeen = false;
+  let failures = 0;
 
   log(`Monitoring deploy of "${serviceName}"...`);
 
   while (true) {
     const elapsed = Date.now() - startTime;
 
-    if (elapsed > TIMEOUT_MS) {
-      throw new Error('24-hour timeout reached waiting for deploy.');
+    if (!actionSeen && elapsed > DEPLOY_ACTION_TIMEOUT_MS) {
+      throw new Error(`${DEPLOY_ACTION_TIMEOUT_MS / 60000}-minute timeout reached: no deploy action appeared.`);
     }
 
-    const estimatedProgress = Math.min(0.95, (elapsed / TIMEOUT_MS) * 0.95);
+    if (elapsed > DEPLOY_TIMEOUT_MS) {
+      throw new Error('30-minute timeout reached waiting for deploy.');
+    }
+
+    const estimatedProgress = Math.min(0.95, (elapsed / DEPLOY_TIMEOUT_MS) * 0.95);
     progress(estimatedProgress);
 
-    const action = await getLatestDeployAction(baseUrl, token, projectName, serviceName);
+    let action;
+    try {
+      action = await getLatestDeployAction(baseUrl, token, projectName, serviceName);
+      failures = 0;
+    } catch (err) {
+      failures++;
+      if (failures >= MAX_LIST_ACTION_FAILURES) {
+        throw new Error(`Deploy action query failed ${failures} times in a row: ${err.message}`);
+      }
+      process.stdout.write(`[WARN] Failed to query deploy action (${failures}/${MAX_LIST_ACTION_FAILURES}): ${err.message}\n`);
+      await sleep(POLL_INTERVAL_MS);
+      continue;
+    }
 
     if (!action) {
       log('Waiting for deploy action to appear...');
       await sleep(POLL_INTERVAL_MS);
       continue;
     }
+
+    actionSeen = true;
 
     const status = (action.status || '').toLowerCase();
     log(`Deploy status: "${status}"`);
@@ -291,70 +350,54 @@ async function waitForDeploy(baseUrl, token, projectName, serviceName) {
   }
 }
 
-async function getServiceStats(baseUrl, token, projectName, serviceName) {
-  try {
-    const res = await rpcMutation(baseUrl, token, 'monitorOld.getServiceStats', {
-      json: { projectName, serviceName },
-    });
-    if (res.status === 200 && res.body?.json) {
-      return res.body.json;
-    }
-  } catch {
-    // stats are informational, not critical
-  }
-  return null;
-}
-
-function logServiceStats(stats) {
-  if (!stats) return;
-
-  const cpu = stats.cpu?.percent != null
-    ? `CPU: ${stats.cpu.percent.toFixed(2)}%`
-    : null;
-
-  const memMB = stats.memory?.usage != null
-    ? (stats.memory.usage / 1024 / 1024).toFixed(1)
-    : null;
-  const memPct = stats.memory?.percent != null
-    ? stats.memory.percent.toFixed(2)
-    : null;
-  const mem = memMB && memPct ? `Memory: ${memMB} MB (${memPct}%)` : null;
-
-  const netInMB = stats.network?.in != null
-    ? (stats.network.in / 1024 / 1024).toFixed(2)
-    : null;
-  const netOutMB = stats.network?.out != null
-    ? (stats.network.out / 1024 / 1024).toFixed(2)
-    : null;
-  const net = netInMB && netOutMB ? `Network: ↓${netInMB} MB  ↑${netOutMB} MB` : null;
-
-  const parts = [cpu, mem, net].filter(Boolean);
-  if (parts.length > 0) {
-    process.stdout.write(`[PERF] ${parts.join('  |  ')}\n`);
-  }
-}
-
-async function waitForJobComplete(baseUrl, token, projectName, serviceName) {
+// THE LOG WINDOW MUST SLIDE. The API returns the LOG_QUERY_LIMIT oldest lines from `start`, with
+// a hard cap of 1000. With `start` fixed at the job start, any container writing more lines than
+// the limit would have its {"complete"} line permanently out of the window, and the job would hang
+// until the 24-hour timeout. So every query uses the last seen timestamp as the new `start`.
+//
+// `startNs` must be captured BEFORE the service is created, so lines the container writes before
+// waitForDeploy() confirms success are not lost.
+async function waitForJobComplete(baseUrl, token, projectName, serviceName, startNs) {
   const startTime = Date.now();
-  const startNs = String(startTime * 1_000_000);
   let lastSeenTs = startNs;
   const collectedLogs = [];
+  let pollCount = 0;
+  let failures = 0;
 
   log('Waiting for job result in logs...');
 
   await sleep(POLL_INTERVAL_MS);
 
   while (true) {
-    if (Date.now() - startTime > TIMEOUT_MS) {
+    if (Date.now() - startTime > JOB_TIMEOUT_MS) {
       throw new Error('24-hour timeout reached waiting for job result.');
     }
 
-    const entries = await getServiceLogs(baseUrl, token, projectName, serviceName, startNs);
+    pollCount++;
+    let newThisPoll = 0;
 
-    if (entries && entries.length > 0) {
+    // Drain while the window comes back full: since the limit is the API cap, a full response
+    // means newer lines are still waiting to be read.
+    while (true) {
+      let entries;
+      try {
+        entries = await getServiceLogs(baseUrl, token, projectName, serviceName, lastSeenTs);
+        failures = 0;
+      } catch (err) {
+        failures++;
+        if (failures >= MAX_LOG_QUERY_FAILURES) {
+          throw new Error(`Log query failed ${failures} times in a row: ${err.message}`);
+        }
+        process.stdout.write(`[WARN] Failed to query logs (${failures}/${MAX_LOG_QUERY_FAILURES}): ${err.message}\n`);
+        break;
+      }
+
+      // `start` is inclusive, so the edge line comes back on every query: filter by timestamp.
       const newLines = [];
+      let returned = 0;
       for (const entry of entries) {
         for (const [ts, line] of entry.values) {
+          returned++;
           if (ts > lastSeenTs) newLines.push([ts, line]);
         }
       }
@@ -380,10 +423,26 @@ async function waitForJobComplete(baseUrl, token, projectName, serviceName) {
           // free-form text line, ignore
         }
       }
+
+      newThisPoll += newLines.length;
+
+      if (returned < LOG_QUERY_LIMIT) break;
+
+      // Full window with nothing new only happens when LOG_QUERY_LIMIT lines share the edge
+      // timestamp. Draining further would loop forever.
+      if (newLines.length === 0) {
+        process.stdout.write('[WARN] Log window full with no new lines; lines sharing the same timestamp may be lost.\n');
+        break;
+      }
     }
 
-    const stats = await getServiceStats(baseUrl, token, projectName, serviceName);
-    logServiceStats(stats);
+    if (pollCount % LOG_HEARTBEAT_EVERY === 0) {
+      const mins = Math.round((Date.now() - startTime) / 60000);
+      process.stdout.write(
+        `[DEBUG] poll #${pollCount} (${mins} min): ${collectedLogs.length} lines read, ` +
+        `${newThisPoll} new this cycle, last ts ${lastSeenTs}\n`
+      );
+    }
 
     await sleep(POLL_INTERVAL_MS);
   }
@@ -417,18 +476,16 @@ async function main() {
     }
   }
 
-  const token = (params.easypanel_token || '').trim() || process.env[API_TOKEN_ENV] || '';
+  const token = process.env[API_TOKEN_ENV] || '';
   if (!token) {
     fail(`Easypanel token not set. Configure ${API_TOKEN_ENV} in the Cronicle container env or in the plugin Secret.`);
-  }
-  if ((params.easypanel_token || '').trim()) {
-    log(`Warning: the "easypanel_token" parameter is written in plain text to the Cronicle transaction log. Move the token to ${API_TOKEN_ENV} and leave the parameter empty.`);
   }
 
   const baseUrl = ((params.easypanel_url || '').trim() || process.env[API_URL_ENV] || '').trim().replace(/\/+$/, '');
   if (!baseUrl) {
     fail(`Easypanel URL not set. Configure ${API_URL_ENV} in the Cronicle container env or in the plugin Secret.`);
   }
+
   const projectName = params.project_name.trim();
 
   const usePrefix = params.service_name_as_prefix == 1 || params.service_name_as_prefix === true;
@@ -474,7 +531,8 @@ async function main() {
     fail(`Variables set both in "env_vars" and in the event Secret: ${duplicated.join(', ')}. Remove them from "env_vars".`);
   }
 
-  envString = [envString, secretEnv].filter(Boolean).join('\n');
+  // CRONICLE_JOB_ID is always injected, so the container can tell which Cronicle job started it.
+  envString = [`CRONICLE_JOB_ID=${job.id}`, envString, secretEnv].filter(Boolean).join('\n');
 
   let mounts = [];
   if (params.mounts && params.mounts.trim()) {
@@ -488,6 +546,21 @@ async function main() {
     }
   }
 
+  let override = null;
+  if (params.override && params.override.trim()) {
+    try {
+      override = JSON.parse(params.override);
+    } catch {
+      fail('The "override" field is not valid JSON. Example: {"deploy": {"replicas": 2}}');
+    }
+    if (typeof override !== 'object' || override === null || Array.isArray(override)) {
+      fail('The "override" field must be a JSON object. Example: {"deploy": {"replicas": 2}}');
+    }
+  }
+
+  // Captured BEFORE creating the service, so lines the container writes right after starting
+  // (before waitForDeploy() confirms success) are not lost.
+  const jobLogStartNs = String(Date.now() * 1_000_000);
   log('Creating service in Easypanel...');
   try {
     await createService(baseUrl, token, {
@@ -501,10 +574,17 @@ async function main() {
       runCommand: (params.run_command || '').trim() || null,
       envString,
       mounts,
+      override,
     });
   } catch (createErr) {
     const partial = await inspectService(baseUrl, token, projectName, serviceName);
-    if (partial) {
+
+    if (createErr.noResponse && partial) {
+      // No response (timeout or connection error), but the service exists: creation most likely
+      // succeeded and only the response was lost. Unlike an explicit HTTP error, there is no
+      // reason to destroy a service that may already be running fine.
+      log(`No response when creating service (${createErr.message}), but the service exists. Assuming success and proceeding.`);
+    } else if (partial) {
       log('Service creation failed but service was partially created. Rolling back...');
       try {
         await destroyService(baseUrl, token, projectName, serviceName);
@@ -512,15 +592,17 @@ async function main() {
       } catch (destroyErr) {
         log(`Warning: failed to destroy partial service: ${destroyErr.message}`);
       }
+      throw createErr;
+    } else {
+      throw createErr;
     }
-    throw createErr;
   }
   log('Service created successfully.');
 
   let result, logs;
   try {
     await waitForDeploy(baseUrl, token, projectName, serviceName);
-    ({ result, logs } = await waitForJobComplete(baseUrl, token, projectName, serviceName));
+    ({ result, logs } = await waitForJobComplete(baseUrl, token, projectName, serviceName, jobLogStartNs));
   } catch (runErr) {
     log('Error during execution. Rolling back service...');
     try {
