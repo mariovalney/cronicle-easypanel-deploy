@@ -17,6 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - New Secrets section in README with the migration steps
 
+## [2.1.0] - 2026-06-10
+
+### Added
+
+- `mounts` parameter: volumes/mounts passed to the service as a JSON array; invalid JSON or a non-array value fails the job before the service is created
+
 ## [2.0.0] - 2026-06-06
 
 > **Breaking change:** requires Easypanel 2.31.0 or later.
@@ -49,5 +55,6 @@ Initial release.
 - `README.md`: full documentation including prerequisites, installation, parameters, job protocol, and flow description
 
 [2.1.1]: https://github.com/mariovalney/cronicle-easypanel-deploy/compare/2.1.0...2.1.1
+[2.1.0]: https://github.com/mariovalney/cronicle-easypanel-deploy/compare/2.0.0...2.1.0
 [2.0.0]: https://github.com/mariovalney/cronicle-easypanel-deploy/compare/1.0.0...v2.0.0
 [1.0.0]: https://github.com/mariovalney/cronicle-easypanel-deploy/releases/tag/1.0.0
