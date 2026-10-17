@@ -21,7 +21,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `mounts` parameter: volumes/mounts passed to the service as a JSON array; invalid JSON or a non-array value fails the job before the service is created
+- `mounts` parameter ("Storage (JSON)" in the plugin form): a JSON array of mounts attached to the ephemeral service, such as `[{"hostPath": "/etc/easypanel/volumes/recordings", "mountPath": "/recordings", "type": "bind"}]`. Validated before calling the Easypanel API: invalid JSON or a non-array value fails the job
+
+### Docs
+
+- Documented the `mounts` parameter in README
 
 ## [2.0.0] - 2026-06-06
 
@@ -32,6 +36,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Migrated all Easypanel API calls from tRPC (`/api/trpc/*`, GET + encoded query string) to oRPC (`/api/rpc/*`, POST + `{ json: { ... } }` body) to support Easypanel 2.31.0+
 - Updated response unwrapping from `result.data.json` to `json`
 - Updated error message extraction to handle the new oRPC error format (`error.json.message` with fallback to `error.message`)
+
+### Added
+
+- Automatic rollback: if `createService` fails after partially creating the service, the partial service is destroyed before the error is reported; if the deploy or the job fails, the service is destroyed too. This prevents the "service already exists" deadlock on retry
 
 ### Fixed
 
