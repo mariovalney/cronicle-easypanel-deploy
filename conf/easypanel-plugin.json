@@ -7,7 +7,7 @@
       "command": "/opt/cronicle/plugins/easypanel-deploy.js",
       "lang": "javascript",
       "bg_color": "",
-      "notes": "Creates and deploys an app service in Easypanel from a GitHub repository (Dockerfile build). Monitors the deploy and reports success or failure.\n\nNote: The API token must be set on the easypanel_token parameter.",
+      "notes": "Creates and deploys an app service in Easypanel from a GitHub repository (Dockerfile build). Monitors the deploy and reports success or failure.\n\nNote: set EASYPANEL_DEPLOY_URL and EASYPANEL_DEPLOY_TOKEN in the Cronicle container env or in the plugin Secret, and put the service secrets in the event Secret. Parameters are written in plain text to the Cronicle transaction log.",
       "params": [
         {
           "id": "easypanel_url",
@@ -15,7 +15,7 @@
           "title": "Easypanel URL",
           "size": 40,
           "value": "",
-          "notes": "Base URL of your Easypanel instance, without trailing slash. Example: https://panel.example.com"
+          "notes": "Base URL of your Easypanel instance, without trailing slash. Example: https://panel.example.com. Can be left empty when EASYPANEL_DEPLOY_URL is set."
         },
         {
           "id": "easypanel_token",
@@ -23,7 +23,7 @@
           "title": "Easypanel API Token",
           "size": 40,
           "value": "",
-          "notes": "Easypanel API token. Set the default value here so all events share the same token. To use a different token per event, change the field type to text."
+          "notes": "Leave empty and set EASYPANEL_DEPLOY_TOKEN instead. Parameters, including this one, are written in plain text to the Cronicle transaction log."
         },
         {
           "id": "project_name",
@@ -102,7 +102,7 @@
           "title": "Environment Variables (JSON)",
           "rows": 5,
           "value": "{}",
-          "notes": "Environment variables as a JSON object. Example: {\"NODE_ENV\": \"production\", \"PORT\": \"3000\"}"
+          "notes": "Environment variables as a JSON object. Example: {\"NODE_ENV\": \"production\", \"PORT\": \"3000\"}. Do not put secrets here: use the event Secret."
         },
         {
           "id": "mounts",

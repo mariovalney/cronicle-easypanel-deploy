@@ -15,6 +15,12 @@ const TIMEOUT_MS = 24 * 60 * 60 * 1000;
 const STATUS_SUCCESS = ['done', 'success', 'completed'];
 const STATUS_FAILURE = ['error', 'failed', 'cancelled'];
 
+// Variables with this prefix configure the plugin itself and are never forwarded to the service.
+// The prefix keeps the plugin's API token apart from an EASYPANEL_TOKEN the service may need.
+const PLUGIN_ENV_PREFIX = 'EASYPANEL_DEPLOY_';
+const API_URL_ENV = `${PLUGIN_ENV_PREFIX}URL`;
+const API_TOKEN_ENV = `${PLUGIN_ENV_PREFIX}TOKEN`;
+
 // ─── Logging (Cronicle protocol) ──────────────────────────────────────────────
 
 function log(msg) {
@@ -223,6 +229,21 @@ function envJsonToString(jsonStr) {
     .join('\n');
 }
 
+// Returns the event Secret variables in Easypanel's multiline env format.
+// Cronicle writes job.params in plain text to the transaction log, but leaves the event Secret out:
+// its values reach the plugin only as environment variables, and its key names come in
+// job.secret_preview ("A|B|C"). Plugin, category and global Secrets have no such list.
+function eventSecretToString(names, env) {
+  return names
+    .map(name => {
+      if (env[name] === undefined) {
+        throw new Error(`Event Secret variable "${name}" is missing from the job environment. Check the Cronicle error log for a Secret decryption failure.`);
+      }
+      return `${name}=${env[name]}`;
+    })
+    .join('\n');
+}
+
 function sanitizeServiceName(name) {
   return name.toLowerCase().replace(/[^a-z0-9-_]/g, '-');
 }
@@ -389,19 +410,25 @@ async function main() {
     fail('Failed to parse stdin JSON input.');
   }
 
-  const required = ['project_name', 'service_name', 'github_owner', 'github_repo', 'github_branch', 'easypanel_url'];
+  const required = ['project_name', 'service_name', 'github_owner', 'github_repo', 'github_branch'];
   for (const key of required) {
     if (!params[key] || !String(params[key]).trim()) {
       fail(`Missing required parameter: "${key}"`);
     }
   }
 
-  const token = (params.easypanel_token || '').trim();
+  const token = (params.easypanel_token || '').trim() || process.env[API_TOKEN_ENV] || '';
   if (!token) {
-    fail('Easypanel token not set. Configure the "easypanel_token" parameter on the plugin.');
+    fail(`Easypanel token not set. Configure ${API_TOKEN_ENV} in the Cronicle container env or in the plugin Secret.`);
+  }
+  if ((params.easypanel_token || '').trim()) {
+    log(`Warning: the "easypanel_token" parameter is written in plain text to the Cronicle transaction log. Move the token to ${API_TOKEN_ENV} and leave the parameter empty.`);
   }
 
-  const baseUrl = params.easypanel_url.trim().replace(/\/+$/, '');
+  const baseUrl = ((params.easypanel_url || '').trim() || process.env[API_URL_ENV] || '').trim().replace(/\/+$/, '');
+  if (!baseUrl) {
+    fail(`Easypanel URL not set. Configure ${API_URL_ENV} in the Cronicle container env or in the plugin Secret.`);
+  }
   const projectName = params.project_name.trim();
 
   const usePrefix = params.service_name_as_prefix == 1 || params.service_name_as_prefix === true;
@@ -430,6 +457,24 @@ async function main() {
       fail('The "env_vars" field is not valid JSON. Example: {"KEY": "value"}');
     }
   }
+
+  const secretNames = (job.secret_preview || '').split('|').filter(name => name && !name.startsWith(PLUGIN_ENV_PREFIX));
+  let secretEnv = '';
+  try {
+    secretEnv = eventSecretToString(secretNames, process.env);
+  } catch (err) {
+    fail(err.message);
+  }
+
+  // A variable both in the event Secret and in env_vars means an incomplete migration: its value
+  // would keep reaching the transaction log through env_vars.
+  const plainKeys = new Set(envString.split('\n').map(line => line.split('=')[0]));
+  const duplicated = secretNames.filter(name => plainKeys.has(name));
+  if (duplicated.length) {
+    fail(`Variables set both in "env_vars" and in the event Secret: ${duplicated.join(', ')}. Remove them from "env_vars".`);
+  }
+
+  envString = [envString, secretEnv].filter(Boolean).join('\n');
 
   let mounts = [];
   if (params.mounts && params.mounts.trim()) {
