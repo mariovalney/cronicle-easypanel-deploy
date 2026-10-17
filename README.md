@@ -11,6 +11,8 @@ A [Cronicle Edge](https://github.com/cronicle-edge/cronicle-edge) plugin that cr
 - [Secrets](#secrets)
 - [Job Protocol](#job-protocol)
 - [How It Works](#how-it-works)
+- [Timeouts](#timeouts)
+- [Development](#development)
 
 
 ## Overview
@@ -28,7 +30,7 @@ This pattern is useful for running batch jobs, data pipelines, or any workload t
 
 ## Prerequisites
 
-- **Easypanel 2.31.0 or later** — this plugin uses the oRPC API (`/api/rpc/*`) introduced in that version. Earlier versions used a different API (tRPC) and are not supported.
+- **Easypanel 2.33.2 or later** (validated on 2.36.0). The plugin uses the REST API: reads via GET with a query string, writes via POST with a plain JSON body. Instances on 2.32.x or earlier (oRPC API under `/api/rpc/*`) need plugin 2.x. See the [API reference](docs/easypanel-api.md).
 - **Advanced Logs** enabled in Easypanel (required for reading container logs via Loki)
 - A GitHub repository containing a `Dockerfile` that runs your job
 - An Easypanel API token, set as `EASYPANEL_DEPLOY_TOKEN` (see [Secrets](#secrets))
@@ -78,8 +80,7 @@ Run this command inside the Cronicle container after startup:
 
 | Parameter | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `easypanel_url` | text | * | - | Base URL of your Easypanel instance, without trailing slash. Example: `https://panel.example.com`. Can be left empty when `EASYPANEL_DEPLOY_URL` is set |
-| `easypanel_token` | password | * | - | Deprecated. Leave empty and set `EASYPANEL_DEPLOY_TOKEN` instead (see [Secrets](#secrets)) |
+| `easypanel_url` | text | No | - | Base URL of your Easypanel instance, without trailing slash. Example: `https://panel.example.com`. Leave empty to use `EASYPANEL_DEPLOY_URL` |
 | `project_name` | text | Yes | - | Easypanel project name. Only lowercase letters, numbers, hyphens and underscores are allowed |
 | `service_name` | text | Yes | - | Base name for the ephemeral service |
 | `service_name_as_prefix` | checkbox | No | `true` | When checked, the final service name is `{service_name}-{job_id}`, guaranteeing uniqueness across concurrent runs. When unchecked, the exact name is used |
@@ -89,11 +90,11 @@ Run this command inside the Cronicle container after startup:
 | `github_build_path` | text | No | `/` | Path inside the repository where the Dockerfile is located |
 | `dockerfile` | text | No | `Dockerfile` | Dockerfile path, relative to Build Path |
 | `run_command` | text | No | - | Runtime command to override the Dockerfile `CMD`. Corresponds to **Advanced &rarr; Command** in Easypanel. Leave empty to use the image default |
-| `env_vars` | textarea | No | `{}` | Environment variables passed to the container, as a JSON object. Example: `{"NODE_ENV": "production", "PORT": "3000"}`. Do not put secrets here: use the event Secret |
+| `env_vars` | textarea | No | `{}` | Environment variables passed to the container, as a JSON object. Example: `{"NODE_ENV": "production", "PORT": "3000"}`. `CRONICLE_JOB_ID` is always injected with the job ID. Do not put secrets here: use the event Secret |
 | `mounts` | textarea | No | - | Volumes/mounts as a JSON array. Example: `[{"hostPath": "/etc/easypanel/volumes/recordings", "mountPath": "/recordings", "type": "bind"}]`. Leave empty for no mounts |
+| `override` | textarea | No | - | JSON object deep-merged over the final payload sent to Easypanel, overriding any value. Example: `{"deploy": {"replicas": 2}}`. Arrays and primitives replace the original value; objects are merged recursively |
 
-
-\* When the parameter is empty, the plugin reads `EASYPANEL_DEPLOY_URL` / `EASYPANEL_DEPLOY_TOKEN` from the environment. One of the two is required.
+The Easypanel API token is not a parameter: it comes from `EASYPANEL_DEPLOY_TOKEN` (see [Secrets](#secrets)).
 
 
 ## Secrets
@@ -102,7 +103,7 @@ Never put tokens in event or plugin parameters. Cronicle writes the whole `job.p
 
 Cronicle **Secrets** stay out of that log: they are stored encrypted and reach the plugin only as environment variables.
 
-**Plugin configuration.** Set these in the Cronicle container env or in the plugin Secret (Admin → Secrets → `plug: Easypanel Deploy`):
+**Plugin configuration.** Set these in the Cronicle container env or in the plugin Secret (Admin → Secrets → `plug: Easypanel Deploy`). `EASYPANEL_DEPLOY_URL` is only needed when `easypanel_url` is empty:
 
 ```
 EASYPANEL_DEPLOY_URL=https://panel.example.com
@@ -122,10 +123,10 @@ The plugin forwards every event Secret variable to the service, except the ones 
 
 The job fails before creating the service when an event Secret variable is also set in `env_vars`, or when it did not reach the job environment (Secret decryption failure).
 
-**Migrating:**
+**Migrating from 2.x:**
 
 1. Rotate the tokens: the current values are already in the transaction log.
-2. Set `EASYPANEL_DEPLOY_URL` and `EASYPANEL_DEPLOY_TOKEN`, and clear the default values of `easypanel_url` and `easypanel_token` in the plugin definition (Admin → Plugins → Easypanel Deploy).
+2. Set `EASYPANEL_DEPLOY_TOKEN` (and `EASYPANEL_DEPLOY_URL` if you want to clear `easypanel_url`), then delete the `easypanel_token` parameter from the plugin definition (Admin → Plugins → Easypanel Deploy) or re-import `conf/easypanel-plugin.json`. The plugin no longer reads it.
 3. In each event, move the secrets from `env_vars` to the event Secret.
 
 
@@ -168,10 +169,31 @@ See [`examples/hello-world/main.py`](examples/hello-world/main.py) for a working
 2. **Validate:** Required parameters are checked; the plugin exits with failure if any are missing.
 3. **Resolve service name:** The service name is built from `service_name` plus the job ID (if `service_name_as_prefix` is checked), then sanitized to match Easypanel naming rules.
 4. **Check for conflicts:** If a service with the same name already exists, the plugin fails immediately to avoid overwriting running workloads.
-5. **Create service:** The plugin calls the Easypanel API to create an app service from the specified GitHub repository, with the variables from `env_vars` and from the event Secret.
-6. **Wait for deploy:** Polls the Easypanel actions API until the build and startup are complete. Reports incremental progress to Cronicle during this phase.
-7. **Wait for job result:** Polls the Loki log API until a line with `"complete": 1` appears in the container's stdout. Progress lines (`"progress": N`) are forwarded to Cronicle in real time.
+5. **Create service:** The plugin calls the Easypanel API to create an app service from the specified GitHub repository, with `CRONICLE_JOB_ID`, the variables from `env_vars` and from the event Secret, and the `override` merged on top. Creating the service already starts the deploy. If the request gets no response but the service exists, the plugin assumes success; if it fails with a partially created service, the service is destroyed.
+6. **Wait for deploy:** Polls the Easypanel actions API until the build and startup are complete. Reports incremental progress to Cronicle during this phase and tolerates up to 5 consecutive query failures.
+7. **Wait for job result:** Polls the Loki log API until a line with `"complete": 1` appears in the container's stdout. The query window slides with the last line seen and drains bursts above the API cap of 1000 lines, so long outputs are never cut. Progress lines (`"progress": N`) are forwarded to Cronicle in real time. Up to 5 consecutive query failures are tolerated.
 8. **Destroy service:** The ephemeral service is always destroyed after the job finishes, regardless of success or failure.
 9. **Report result:** The plugin reports success or failure to Cronicle based on the `code` field in the job's completion line.
 
-Note: Advanced Logs must be enabled in Easypanel for step 7 to work. Without it, the Loki endpoint returns HTTP 500 and the plugin exits with an error.
+Note: Advanced Logs must be enabled in Easypanel for step 7 to work. Without it, the log endpoint returns HTTP 400 `fetch failed` (HTTP 500 on older versions) and the plugin exits with an error.
+
+
+## Timeouts
+
+| Timeout | Value | Env override |
+|---|---|---|
+| Each HTTP request to Easypanel | 120 seconds | `EASYPANEL_HTTP_TIMEOUT_MS` |
+| Waiting for the first deploy action to appear | 5 minutes | `EASYPANEL_DEPLOY_ACTION_TIMEOUT_MS` |
+| Waiting for the deploy to finish, once the action appears | 30 minutes | - |
+| Waiting for the job result inside the container | 24 hours | - |
+
+The poll interval is 5 seconds (`EASYPANEL_POLL_INTERVAL_MS`).
+
+
+## Development
+
+The tests use Node's built-in runner, with no dependencies, against a mock of the Easypanel REST API:
+
+```bash
+node --test
+```
