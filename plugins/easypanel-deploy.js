@@ -16,6 +16,10 @@ const HTTP_TIMEOUT_MS = parseInt(process.env.EASYPANEL_HTTP_TIMEOUT_MS, 10) || 1
 // Separate from DEPLOY_TIMEOUT_MS: if no deploy action ever shows up (e.g. an orphan service that
 // never triggered a deploy), there is no point in waiting the full 30 minutes to give up.
 const DEPLOY_ACTION_TIMEOUT_MS = parseInt(process.env.EASYPANEL_DEPLOY_ACTION_TIMEOUT_MS, 10) || 5 * 60 * 1000;
+// A deploy action reads "pending" both while queued and while building, so elapsed time alone
+// cannot tell a slow build from one that never started. The build log can: it stays empty until
+// the build runs.
+const DEPLOY_START_TIMEOUT_MS = parseInt(process.env.EASYPANEL_DEPLOY_START_TIMEOUT_MS, 10) || 2 * 60 * 1000;
 const DEPLOY_TIMEOUT_MS = 30 * 60 * 1000;
 const JOB_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 const MAX_LIST_ACTION_FAILURES = 5;
@@ -26,8 +30,11 @@ const LOG_QUERY_LIMIT = 1000;
 const MAX_LOG_QUERY_FAILURES = 5;
 const LOG_HEARTBEAT_EVERY = 12;
 
+// Observed on 2.38.0: "pending" from creation to the end of the build, then "done", "error" or
+// "killed" (killAction, from the API or the panel).
+const STATUS_PENDING = 'pending';
 const STATUS_SUCCESS = ['done', 'success', 'completed'];
-const STATUS_FAILURE = ['error', 'failed', 'cancelled'];
+const STATUS_FAILURE = ['error', 'failed', 'cancelled', 'killed'];
 
 // Variables with this prefix configure the plugin itself and are never forwarded to the service.
 // The prefix keeps the plugin's API token apart from an EASYPANEL_TOKEN the service may need.
@@ -169,7 +176,9 @@ async function destroyService(baseUrl, token, projectName, serviceName) {
   }
 }
 
-// Creating the service already starts the deploy; there is no separate deploy call.
+// Creating the service already starts the deploy; there is no separate deploy call. Easypanel
+// answers only after that deploy has finished (a 30 s build took 37 s on 2.38.0), so a build
+// longer than HTTP_TIMEOUT_MS ends here as a timeout.
 async function createService(baseUrl, token, params) {
   const body = {
     projectName: params.projectName,
@@ -203,21 +212,61 @@ async function createService(baseUrl, token, params) {
   }
 }
 
-// Returns the latest deploy action, or null if none exists yet. Throws on HTTP failure so the
-// caller decides how to handle it.
-async function getLatestDeployAction(baseUrl, token, projectName, serviceName) {
+// The service's deployment actions, newest first, without their build log. Throws on HTTP failure
+// so the caller decides how to handle it.
+async function listDeployActions(baseUrl, token, projectName, serviceName, limit) {
   const res = await apiGet(baseUrl, token, 'listActions', {
-    projectName, serviceName, type: 'deployment', limit: 1,
+    projectName, serviceName, type: 'deployment', limit,
   });
 
   if (res.status !== 200) {
     throw new Error(`Failed to list actions: HTTP ${res.status} - ${apiErrorMessage(res)}`);
   }
 
-  const items = res.body;
-  if (!Array.isArray(items) || items.length === 0) return null;
+  return Array.isArray(res.body) ? res.body : [];
+}
 
-  return items[0];
+// Returns the latest deploy action, or null if none exists yet.
+async function getLatestDeployAction(baseUrl, token, projectName, serviceName) {
+  const [latest] = await listDeployActions(baseUrl, token, projectName, serviceName, 1);
+  return latest || null;
+}
+
+// Returns one action with its build log in "log".
+async function getAction(baseUrl, token, id) {
+  const res = await apiGet(baseUrl, token, 'getAction', { id });
+  if (res.status !== 200) {
+    throw new Error(`Failed to get action ${id}: HTTP ${res.status} - ${apiErrorMessage(res)}`);
+  }
+  return res.body;
+}
+
+// Easypanel only accepts it while the action is pending.
+async function killAction(baseUrl, token, id) {
+  const res = await apiPost(baseUrl, token, 'killAction', { id });
+  if (res.status !== 200) {
+    throw new Error(`Failed to kill action ${id}: HTTP ${res.status} - ${apiErrorMessage(res)}`);
+  }
+}
+
+// Kills the service's pending deploy actions, then destroys it, so a failed job leaves nothing
+// queued on Easypanel. Kill errors are only logged, since the destroy still has to run.
+async function teardownService(baseUrl, token, projectName, serviceName) {
+  try {
+    const actions = await listDeployActions(baseUrl, token, projectName, serviceName, 10);
+    for (const action of actions.filter(isPending)) {
+      try {
+        await killAction(baseUrl, token, action.id);
+        log(`Killed pending action ${action.id}.`);
+      } catch (err) {
+        log(`Warning: ${err.message}`);
+      }
+    }
+  } catch (err) {
+    log(`Warning: could not look up pending actions: ${err.message}`);
+  }
+
+  await destroyService(baseUrl, token, projectName, serviceName);
 }
 
 // The API returns the LOG_QUERY_LIMIT OLDEST lines from `startNs`, and `start` is inclusive.
@@ -283,15 +332,38 @@ function sanitizeServiceName(name) {
   return name.toLowerCase().replace(/[^a-z0-9-_]/g, '-');
 }
 
+function actionStatus(action) {
+  return (action.status || '').toLowerCase();
+}
+
+function isPending(action) {
+  return actionStatus(action) === STATUS_PENDING;
+}
+
+function hasBuildLog(action) {
+  return typeof action.log === 'string' && action.log.trim() !== '';
+}
+
+// Easypanel returns action dates in UTC with no zone suffix.
+function describeAction(action) {
+  return `action ${action.id} (created ${action.createdAt} UTC, updated ${action.updatedAt} UTC)`;
+}
+
 // ─── Polling loops ────────────────────────────────────────────────────────────
 
-// Two timeouts: if the deploy action never shows up, give up after DEPLOY_ACTION_TIMEOUT_MS;
-// once it shows up, DEPLOY_TIMEOUT_MS applies to the deploy itself. Up to
-// MAX_LIST_ACTION_FAILURES consecutive query failures are tolerated, so a single network error
-// does not abort a deploy that is progressing normally.
-async function waitForDeploy(baseUrl, token, projectName, serviceName) {
+// Three limits:
+//   - DEPLOY_ACTION_TIMEOUT_MS: no deploy action ever shows up.
+//   - DEPLOY_START_TIMEOUT_MS: the action is pending and its build log is still empty, counted from
+//     `requestedAt` (when createAppService was sent). Without it, a deploy that never starts holds
+//     the event's job slot for the full DEPLOY_TIMEOUT_MS.
+//   - DEPLOY_TIMEOUT_MS: the deploy, once its action exists.
+// No progress is reported here: until the action leaves "pending" there is nothing to measure.
+// Up to MAX_LIST_ACTION_FAILURES consecutive query failures are tolerated, so a single network
+// error does not abort a deploy that is progressing normally.
+async function waitForDeploy(baseUrl, token, projectName, serviceName, requestedAt) {
   const startTime = Date.now();
-  let actionSeen = false;
+  let action = null;
+  let buildStartedId = null;
   let failures = 0;
 
   log(`Monitoring deploy of "${serviceName}"...`);
@@ -299,20 +371,21 @@ async function waitForDeploy(baseUrl, token, projectName, serviceName) {
   while (true) {
     const elapsed = Date.now() - startTime;
 
-    if (!actionSeen && elapsed > DEPLOY_ACTION_TIMEOUT_MS) {
+    if (!action && elapsed > DEPLOY_ACTION_TIMEOUT_MS) {
       throw new Error(`${DEPLOY_ACTION_TIMEOUT_MS / 60000}-minute timeout reached: no deploy action appeared.`);
     }
 
     if (elapsed > DEPLOY_TIMEOUT_MS) {
-      throw new Error('30-minute timeout reached waiting for deploy.');
+      throw new Error(`30-minute timeout reached waiting for deploy, ${describeAction(action)}.`);
     }
 
-    const estimatedProgress = Math.min(0.95, (elapsed / DEPLOY_TIMEOUT_MS) * 0.95);
-    progress(estimatedProgress);
-
-    let action;
+    let latest;
     try {
-      action = await getLatestDeployAction(baseUrl, token, projectName, serviceName);
+      latest = await getLatestDeployAction(baseUrl, token, projectName, serviceName);
+      // Only getAction carries the build log. Once the build has started it is not needed again.
+      if (latest && isPending(latest) && latest.id !== buildStartedId) {
+        latest = await getAction(baseUrl, token, latest.id);
+      }
       failures = 0;
     } catch (err) {
       failures++;
@@ -324,15 +397,16 @@ async function waitForDeploy(baseUrl, token, projectName, serviceName) {
       continue;
     }
 
-    if (!action) {
+    if (!latest) {
       log('Waiting for deploy action to appear...');
       await sleep(POLL_INTERVAL_MS);
       continue;
     }
 
-    actionSeen = true;
+    if (latest.id !== action?.id) log(`Following ${describeAction(latest)}.`);
+    action = latest;
 
-    const status = (action.status || '').toLowerCase();
+    const status = actionStatus(action);
     log(`Deploy status: "${status}"`);
 
     if (STATUS_SUCCESS.includes(status)) {
@@ -341,8 +415,19 @@ async function waitForDeploy(baseUrl, token, projectName, serviceName) {
     }
 
     if (STATUS_FAILURE.includes(status)) {
-      const reason = action.error || action.message || status;
-      throw new Error(`Deploy failed with status "${status}": ${reason}`);
+      const reason = action.error || action.message;
+      throw new Error(`Deploy failed with status "${status}"${reason ? `: ${reason}` : ''}, ${describeAction(action)}.`);
+    }
+
+    if (isPending(action) && action.id !== buildStartedId) {
+      if (hasBuildLog(action)) {
+        buildStartedId = action.id;
+        log('Build started.');
+      } else if (Date.now() - requestedAt > DEPLOY_START_TIMEOUT_MS) {
+        throw new Error(
+          `Deploy still "pending" after ${DEPLOY_START_TIMEOUT_MS / 1000}s with no build started, ${describeAction(action)}.`
+        );
+      }
     }
 
     log(`Status "${status}" is not terminal, continuing to poll...`);
@@ -560,7 +645,8 @@ async function main() {
 
   // Captured BEFORE creating the service, so lines the container writes right after starting
   // (before waitForDeploy() confirms success) are not lost.
-  const jobLogStartNs = String(Date.now() * 1_000_000);
+  const deployRequestedAt = Date.now();
+  const jobLogStartNs = String(deployRequestedAt * 1_000_000);
   log('Creating service in Easypanel...');
   try {
     await createService(baseUrl, token, {
@@ -580,14 +666,13 @@ async function main() {
     const partial = await inspectService(baseUrl, token, projectName, serviceName);
 
     if (createErr.noResponse && partial) {
-      // No response (timeout or connection error), but the service exists: creation most likely
-      // succeeded and only the response was lost. Unlike an explicit HTTP error, there is no
-      // reason to destroy a service that may already be running fine.
-      log(`No response when creating service (${createErr.message}), but the service exists. Assuming success and proceeding.`);
+      // No answer, but the service exists: either a build longer than HTTP_TIMEOUT_MS or a deploy
+      // that never started. Neither is a success yet; waitForDeploy tells them apart by the build log.
+      log(`No response when creating service (${createErr.message}), but the service exists. Following its deploy action.`);
     } else if (partial) {
       log('Service creation failed but service was partially created. Rolling back...');
       try {
-        await destroyService(baseUrl, token, projectName, serviceName);
+        await teardownService(baseUrl, token, projectName, serviceName);
         log('Partial service destroyed.');
       } catch (destroyErr) {
         log(`Warning: failed to destroy partial service: ${destroyErr.message}`);
@@ -601,12 +686,12 @@ async function main() {
 
   let result, logs;
   try {
-    await waitForDeploy(baseUrl, token, projectName, serviceName);
+    await waitForDeploy(baseUrl, token, projectName, serviceName, deployRequestedAt);
     ({ result, logs } = await waitForJobComplete(baseUrl, token, projectName, serviceName, jobLogStartNs));
   } catch (runErr) {
     log('Error during execution. Rolling back service...');
     try {
-      await destroyService(baseUrl, token, projectName, serviceName);
+      await teardownService(baseUrl, token, projectName, serviceName);
       log('Service destroyed.');
     } catch (destroyErr) {
       log(`Warning: failed to destroy service: ${destroyErr.message}`);

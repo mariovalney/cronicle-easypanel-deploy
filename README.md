@@ -169,8 +169,8 @@ See [`examples/hello-world/main.py`](examples/hello-world/main.py) for a working
 2. **Validate:** Required parameters are checked; the plugin exits with failure if any are missing.
 3. **Resolve service name:** The service name is built from `service_name` plus the job ID (if `service_name_as_prefix` is checked), then sanitized to match Easypanel naming rules.
 4. **Check for conflicts:** If a service with the same name already exists, the plugin fails immediately to avoid overwriting running workloads.
-5. **Create service:** The plugin calls the Easypanel API to create an app service from the specified GitHub repository, with `CRONICLE_JOB_ID`, the variables from `env_vars` and from the event Secret, and the `override` merged on top. Creating the service already starts the deploy. If the request gets no response but the service exists, the plugin assumes success; if it fails with a partially created service, the service is destroyed.
-6. **Wait for deploy:** Polls the Easypanel actions API until the build and startup are complete. Reports incremental progress to Cronicle during this phase and tolerates up to 5 consecutive query failures.
+5. **Create service:** The plugin calls the Easypanel API to create an app service from the specified GitHub repository, with `CRONICLE_JOB_ID`, the variables from `env_vars` and from the event Secret, and the `override` merged on top. Creating the service already starts the deploy, and Easypanel only answers once that deploy ends. If the request gets no response but the service exists, the plugin follows the deploy action; if it fails with a partially created service, the service is destroyed.
+6. **Wait for deploy:** Polls the Easypanel actions API until the build and startup are complete, tolerating up to 5 consecutive query failures. A `killed` or `error` action fails the job right away, and so does an action still `pending` with an empty build log after the start limit (see [Timeouts](#timeouts)). On any failure, pending deploy actions are killed before the service is destroyed. No progress is reported during this phase.
 7. **Wait for job result:** Polls the Loki log API until a line with `"complete": 1` appears in the container's stdout. The query window slides with the last line seen and drains bursts above the API cap of 1000 lines, so long outputs are never cut. Progress lines (`"progress": N`) are forwarded to Cronicle in real time. Up to 5 consecutive query failures are tolerated.
 8. **Destroy service:** The ephemeral service is always destroyed after the job finishes, regardless of success or failure.
 9. **Report result:** The plugin reports success or failure to Cronicle based on the `code` field in the job's completion line.
@@ -184,6 +184,7 @@ Note: Advanced Logs must be enabled in Easypanel for step 7 to work. Without it,
 |---|---|---|
 | Each HTTP request to Easypanel | 120 seconds | `EASYPANEL_HTTP_TIMEOUT_MS` |
 | Waiting for the first deploy action to appear | 5 minutes | `EASYPANEL_DEPLOY_ACTION_TIMEOUT_MS` |
+| Waiting for a `pending` deploy action to start its build, counted from the create request | 2 minutes | `EASYPANEL_DEPLOY_START_TIMEOUT_MS` |
 | Waiting for the deploy to finish, once the action appears | 30 minutes | - |
 | Waiting for the job result inside the container | 24 hours | - |
 

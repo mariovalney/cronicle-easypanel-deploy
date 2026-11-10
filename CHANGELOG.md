@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.0] - 2026-11-10
+
+### Fixed
+
+- A deploy action killed from the panel or the API (`killed`) was not treated as terminal, so the job kept polling until the 30-minute deploy timeout. It now fails the job right away
+- A deploy that never starts no longer holds the job for 30 minutes. An action still `pending` with an empty build log 2 minutes after `createAppService` was sent fails the job (`EASYPANEL_DEPLOY_START_TIMEOUT_MS`). Easypanel keeps an action `pending` while it builds too, so the build log from `getAction` is what tells a stuck deploy from a slow build
+- When `createAppService` gets no response but the service exists, the plugin no longer assumes success: it follows the deploy action under the limit above. `createAppService` only answers once the deploy ends, so builds longer than the HTTP timeout keep working
+- On any failure, the service's pending deploy actions are killed (`killAction`) before the service is destroyed, so nothing stays queued on Easypanel
+
+### Changed
+
+- No progress is reported while the deploy is pending. It used to grow with elapsed time and could reach 95% on a deploy that never ran
+- The deploy action id, `createdAt` and `updatedAt` are logged when the action is first seen and included in deploy failure messages
+
 ## [3.0.0] - 2026-10-17
 
 > **Breaking changes:** requires Easypanel 2.33.2 or later, and the API token now comes only from `EASYPANEL_DEPLOY_TOKEN`.
@@ -95,6 +109,7 @@ Initial release.
 - `examples/hello-world/`: reference implementation of a containerized job following the Cronicle plugin protocol
 - `README.md`: full documentation including prerequisites, installation, parameters, job protocol, and flow description
 
+[3.1.0]: https://github.com/mariovalney/cronicle-easypanel-deploy/compare/3.0.0...3.1.0
 [3.0.0]: https://github.com/mariovalney/cronicle-easypanel-deploy/compare/2.1.1...3.0.0
 [2.1.1]: https://github.com/mariovalney/cronicle-easypanel-deploy/compare/2.1.0...2.1.1
 [2.1.0]: https://github.com/mariovalney/cronicle-easypanel-deploy/compare/2.0.0...2.1.0
