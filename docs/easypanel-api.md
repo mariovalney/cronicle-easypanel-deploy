@@ -161,6 +161,8 @@ Creates a new app service from a GitHub repository, built from a Dockerfile. Cre
 
 **Response:** HTTP 200 with the created service object (same format as `inspectAppService`).
 
+> **The response only arrives once the deploy ends.** Measured on 2.38.0: with a 30 s build, the request took 37 s and the deploy action finished 1 s before the response. A build longer than the client's HTTP timeout ends as a timeout, with the service already created and the action still `pending`. The same holds for `deployAppService`. To tell whether the deploy is running or stuck, check the action (see [Actions](#actions-deploy-monitoring)).
+
 ---
 
 ### Destroy service
@@ -214,13 +216,18 @@ Easypanel records each operation as an "action". Use `listActions` to find out w
 ]
 ```
 
-**Values of the `status` field:**
+**Values of the `status` field** (observed on 2.38.0; the published schema does not list them):
 
 | Status | Meaning |
 |---|---|
-| `done` / `success` / `completed` | Completed successfully |
-| `error` / `failed` / `cancelled` | Failed or was cancelled |
-| Anything else | In progress, keep polling |
+| `pending` | Queued **or** building. There is no separate "running" state, and `updatedAt` only changes when the action ends |
+| `done` | Completed successfully |
+| `error` | Failed |
+| `killed` | Stopped by `killAction`, from the API or the panel. The log ends with `### Killed` |
+
+The plugin also accepts `success`/`completed` as success and `failed`/`cancelled` as failure, values never seen on a real instance.
+
+Since `pending` covers both the queue and the build, what sets a stuck deploy apart from a slow build is the log, which only `getAction` returns: empty while nothing has run, BuildKit output as soon as the build starts.
 
 **Polling strategy:**
 
@@ -229,13 +236,36 @@ while (true) {
   const actions = await get('/api/listActions', {
     projectName, serviceName, type: 'deployment', limit: 1,
   });
-  const action = actions?.[0];
+  let action = actions?.[0];
   if (!action) { await sleep(5000); continue; }
-  if (['done', 'success', 'completed'].includes(action.status)) break;
-  if (['error', 'failed', 'cancelled'].includes(action.status)) throw new Error('Deploy failed');
+  if (action.status === 'done') break;
+  if (['error', 'killed'].includes(action.status)) throw new Error('Deploy failed');
+  action = await get('/api/getAction', { id: action.id });
+  if (!action.log && Date.now() - requestedAt > 2 * 60 * 1000) {
+    await post('/api/killAction', { id: action.id });
+    throw new Error('Deploy never left pending');
+  }
   await sleep(5000);
 }
 ```
+
+### Get an action
+
+- **Endpoint:** `GET /api/getAction?id=cmwaw1o17001z06py2ptuhjdz`
+
+**Response (200):** the same fields as `listActions`, plus `log` (a string with the build output). Answers 404 for actions of services already destroyed.
+
+### Kill an action
+
+- **Endpoint:** `POST /api/killAction`
+
+**Body:**
+
+```json
+{ "id": "cmwaw1o17001z06py2ptuhjdz" }
+```
+
+Only acts on a `pending` action. On a running build, BuildKit is cancelled and the action becomes `killed`.
 
 > **Warning:** the token must have access to the project. If `listActions` returns an empty array even after the deploy, check that the token belongs to a user with permission on the project.
 
@@ -356,4 +386,6 @@ while (true) {
 | Create service | `/api/createAppService` | POST | `/api/rpc/services/app/createService` |
 | Destroy service | `/api/destroyAppService` | POST | `/api/rpc/services/app/destroyService` |
 | Monitor deploy | `/api/listActions` | GET | `/api/rpc/actions/listActions` |
+| Action build log | `/api/getAction` | GET | not verified |
+| Kill a pending action | `/api/killAction` | POST | not verified |
 | Fetch logs (Loki) | `/api/queryServiceLogs` | GET | `/api/rpc/logs/queryServiceLogs` |

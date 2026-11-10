@@ -233,7 +233,7 @@ test('propagates a job failure (code != 0) with its description', async () => {
 
 // ─── Network robustness ──────────────────────────────────────────────────────
 
-test('createService without response but the service exists: assumes success and proceeds', async () => {
+test('createService without response but the service exists: follows the action and proceeds', async () => {
   // Creation succeeded on the Easypanel side, but the HTTP response never arrived (dropped
   // connection). The plugin must not treat this as a failure and destroy a service that
   // already exists and is starting.
@@ -291,7 +291,7 @@ test('createService without response but the service exists: assumes success and
     });
 
     assert.strictEqual(res.timedOut, false, 'the job hung');
-    assert.match(res.stdout, /Assuming success and proceeding/);
+    assert.match(res.stdout, /Following its deploy action/);
     assert.strictEqual(res.code, 0, `expected success, stdout:\n${res.stdout}`);
     // The service must not be destroyed because of the connection error; only the final
     // destroy at the normal end of the job should run.
@@ -442,6 +442,141 @@ test('aborts after consecutive failures when querying the deploy action', async 
     assert.ok(destroyed, 'expected the service to be destroyed after exhausting retries');
   } finally {
     await new Promise(r => server.close(r));
+  }
+});
+
+// ─── Stuck or killed deploys ──────────────────────────────────────────────────
+// Behavior measured on Easypanel 2.38.0: the deploy action reads "pending" from creation to the
+// end of the build, with updatedAt equal to createdAt, and createAppService only answers after
+// the deploy ends. What sets a build apart from a stuck action is the log from getAction.
+
+/**
+ * Mock with one deploy action. `onPoll(n, action)` runs on each listActions call and may change
+ * the action. killAction turns a pending action into "killed", as Easypanel does.
+ */
+async function startDeployMock({ action, onPoll = () => {}, createHangs = false }) {
+  const calls = [];
+  const state = { created: false, listActions: 0, getAction: 0 };
+
+  const server = http.createServer((req, res) => {
+    let raw = '';
+    req.on('data', c => { raw += c; });
+    req.on('end', () => {
+      const { op, fields } = parseCall(req, raw);
+      calls.push(op === 'POST killAction' ? `${op} ${fields.id}` : op);
+      const send = (obj, code = 200) => {
+        res.writeHead(code, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(obj));
+      };
+
+      if (op === 'GET inspectAppService') return state.created ? send({ name: 'svc' }) : send(NOT_FOUND, 404);
+      if (op === 'POST createAppService') {
+        state.created = true;
+        if (createHangs) return;
+        return send({ name: 'svc' });
+      }
+      if (op === 'POST destroyAppService') { res.writeHead(200); return res.end(); }
+      if (op === 'GET listActions') {
+        onPoll(state.listActions++, action);
+        const { log, ...listed } = action;
+        return send([listed]);
+      }
+      if (op === 'GET getAction') {
+        state.getAction++;
+        return send(action);
+      }
+      if (op === 'POST killAction') {
+        if (action.status === 'pending') action.status = 'killed';
+        return send(null);
+      }
+      if (op === 'GET queryServiceLogs') {
+        const ts = String(BigInt(Date.now() + 10000) * 1000000n);
+        return send({ entries: [{ stream: {}, values: [[ts, '{"complete": 1, "code": 0}']] }] });
+      }
+
+      send(NOT_FOUND, 404);
+    });
+  });
+
+  await new Promise(r => server.listen(0, '127.0.0.1', r));
+  return {
+    url: `http://127.0.0.1:${server.address().port}`,
+    calls,
+    state,
+    close: () => {
+      server.closeAllConnections();
+      return new Promise(r => server.close(r));
+    },
+  };
+}
+
+function deployAction(fields) {
+  return {
+    id: 'cmwaw1o17001z06py2ptuhjdz',
+    type: 'deployment',
+    createdAt: '2026-11-10 16:12:12',
+    updatedAt: '2026-11-10 16:12:12',
+    status: 'pending',
+    log: '',
+    ...fields,
+  };
+}
+
+test('a killed deploy action fails the job right away and destroys the service', async () => {
+  const mock = await startDeployMock({
+    action: deployAction({ status: 'killed', updatedAt: '2026-11-10 16:13:36', log: '### Killed\n' }),
+  });
+  try {
+    const res = await runPlugin(mock.url, { killAfterMs: 20000 });
+
+    assert.strictEqual(res.timedOut, false, 'the job kept polling');
+    assert.strictEqual(res.code, 1);
+    assert.match(res.stdout, /Deploy failed with status \\"killed\\", action cmwaw1o17001z06py2ptuhjdz \(created 2026-11-10 16:12:12 UTC, updated 2026-11-10 16:13:36 UTC\)/);
+    assert.ok(mock.calls.includes('POST destroyAppService'), 'expected the service to be destroyed');
+  } finally {
+    await mock.close();
+  }
+});
+
+test('createAppService without response and a deploy that never starts: kills the action, destroys the service and fails', async () => {
+  const mock = await startDeployMock({ action: deployAction(), createHangs: true });
+  try {
+    const res = await runPlugin(mock.url, {
+      env: { EASYPANEL_HTTP_TIMEOUT_MS: '500', EASYPANEL_DEPLOY_START_TIMEOUT_MS: '1500' },
+      killAfterMs: 20000,
+    });
+
+    assert.strictEqual(res.timedOut, false, 'the job hung on the pending deploy');
+    assert.strictEqual(res.code, 1);
+    assert.match(res.stdout, /Deploy still \\"pending\\" after 1.5s with no build started, action cmwaw1o17001z06py2ptuhjdz \(created 2026-11-10 16:12:12 UTC/);
+    assert.doesNotMatch(res.stdout, /% complete/, 'progress moved while the deploy was pending');
+
+    const kill = mock.calls.indexOf('POST killAction cmwaw1o17001z06py2ptuhjdz');
+    const destroy = mock.calls.indexOf('POST destroyAppService');
+    assert.ok(kill !== -1, 'the pending action was not killed');
+    assert.ok(destroy > kill, 'the service must be destroyed after the action is killed');
+  } finally {
+    await mock.close();
+  }
+});
+
+test('a slow build stays pending with a log and is not killed by the start limit', async () => {
+  const mock = await startDeployMock({
+    action: deployAction({ log: '#5 [2/2] RUN npm ci\n' }),
+    onPoll: (n, action) => { if (n >= 8) action.status = 'done'; },
+  });
+  try {
+    const res = await runPlugin(mock.url, {
+      env: { EASYPANEL_DEPLOY_START_TIMEOUT_MS: '100' },
+      killAfterMs: 20000,
+    });
+
+    assert.strictEqual(res.code, 0, `expected success, stdout:\n${res.stdout}`);
+    assert.match(res.stdout, /Build started/);
+    assert.ok(!mock.calls.some(c => c.startsWith('POST killAction')), 'killed a running build');
+    assert.strictEqual(mock.state.getAction, 1, 'getAction should only run until the build starts');
+  } finally {
+    await mock.close();
   }
 });
 
